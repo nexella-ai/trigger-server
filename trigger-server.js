@@ -1,3 +1,5 @@
+// trigger-server.js (Final corrected version)
+
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -28,12 +30,12 @@ app.post('/trigger-call', (req, res) => {
           email: email
         }
       }));
-      console.log('🚀 Sent start_call to Retell.');
-    }, 500); // <-- 500ms delay to let WebSocket handshake fully establish
+      console.log('📞 Sent start_call to Retell.');
+    }, 500); // 500ms small delay to prevent race conditions
   });
 
   ws.on('message', (message) => {
-    console.log('📩 Received from Retell:', message.toString());
+    console.log('📝 Received from Retell:', message.toString());
   });
 
   ws.on('error', (error) => {
@@ -41,13 +43,19 @@ app.post('/trigger-call', (req, res) => {
   });
 
   ws.on('close', () => {
-    console.log('⚡ WebSocket closed.');
+    console.log('🔒 WebSocket closed.');
   });
 
   res.status(200).send('Trigger received.');
 });
 
+// OPTIONAL - Webhook for Retell call events (answer, hangup, etc)
+app.post('/retell-webhook', (req, res) => {
+  console.log('📞 Retell Webhook Event:', req.body);
+  res.status(200).send('Webhook received.');
+});
+
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(`Trigger WebSocket Server running on port ${PORT}`);
+  console.log(`🚀 Trigger WebSocket Server running on port ${PORT}`);
 });
