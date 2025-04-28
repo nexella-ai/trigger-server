@@ -20,22 +20,37 @@ app.post('/trigger-call', (req, res) => {
   ws.on('open', () => {
     console.log('WebSocket opened to Retell.');
 
-    const startCallPayload = {
-      type: 'start_call',
-      agent_id: process.env.RETELL_AGENT_ID,
-      phone_number: phone,
-      custom_fields: {
-        name: name,
-        email: email
-      }
+    // Step 1: Subscribe first
+    const subscribePayload = {
+      type: 'subscribe',
+      api_key: process.env.RETELL_API_KEY
     };
 
-    console.log('Sending start_call payload:', startCallPayload);
-    ws.send(JSON.stringify(startCallPayload));
+    console.log('Sending subscribe payload:', subscribePayload);
+    ws.send(JSON.stringify(subscribePayload));
   });
 
   ws.on('message', (message) => {
     console.log('Received from Retell:', message.toString());
+    const parsed = JSON.parse(message);
+
+    if (parsed.type === 'subscribed') {
+      console.log('Subscribed successfully, sending start_call...');
+
+      // Step 2: After subscribed, send start_call
+      const startCallPayload = {
+        type: 'start_call',
+        agent_id: process.env.RETELL_AGENT_ID,
+        phone_number: phone,
+        custom_fields: {
+          name: name,
+          email: email
+        }
+      };
+
+      console.log('Sending start_call payload:', startCallPayload);
+      ws.send(JSON.stringify(startCallPayload));
+    }
   });
 
   ws.on('error', (error) => {
