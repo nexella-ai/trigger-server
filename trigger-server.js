@@ -13,33 +13,35 @@ app.post('/trigger-call', (req, res) => {
   const { name, email, phone } = req.body;
   console.log('Received trigger:', { name, email, phone });
 
-  // ✅ Add API key in WebSocket URL
-  const ws = new WebSocket(`wss://api.retellai.com/ws?api_key=${process.env.RETELL_API_KEY}`);
+  const ws = new WebSocket('wss://api.retellai.com/ws');
 
   ws.on('open', () => {
-    console.log('WebSocket opened to Retell.');
+    console.log('✅ WebSocket opened to Retell.');
 
-    ws.send(JSON.stringify({
-      type: 'start_call',
-      phone_number: phone,
-      agent_id: process.env.RETELL_AGENT_ID, 
-      custom_fields: {
-        name: name,
-        email: email
-      }
-    }));
+    setTimeout(() => {
+      ws.send(JSON.stringify({
+        type: 'start_call',
+        phone_number: phone,
+        agent_id: process.env.RETELL_AGENT_ID,
+        custom_fields: {
+          name: name,
+          email: email
+        }
+      }));
+      console.log('🚀 Sent start_call to Retell.');
+    }, 500); // <-- 500ms delay to let WebSocket handshake fully establish
   });
 
   ws.on('message', (message) => {
-    console.log('Received from Retell:', message.toString());
+    console.log('📩 Received from Retell:', message.toString());
   });
 
   ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
+    console.error('❌ WebSocket error:', error);
   });
 
   ws.on('close', () => {
-    console.log('WebSocket closed.');
+    console.log('⚡ WebSocket closed.');
   });
 
   res.status(200).send('Trigger received.');
