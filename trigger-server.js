@@ -1,41 +1,57 @@
 const express = require('express');
+const { WebSocketServer } = require('ws');
 const http = require('http');
-const WebSocket = require('ws');
-const bodyParser = require('body-parser');
+const axios = require('axios');
+const WebSocket = require('ws'); // <- Make sure this is included!
 
 const app = express();
 const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
-const wss = new WebSocket.Server({ server });
+app.use(express.json());
 
-let activeClients = [];
+// 🧠 Existing WebSocket server (keep this)
+wss.on('connection', (ws) => {
+  console.log('WebSocket connected.');
+  ws.on('message', (message) => {
+    console.log('Received message:', message.toString());
+  });
+});
 
-app.use(bodyParser.json());
-
-app.post('/trigger-call', (req, res) => {
+// 🛠️ NEW: Trigger call endpoint
+app.post('/trigger-call', async (req, res) => {
   const { name, email, phone } = req.body;
-  
+
   console.log('Received trigger:', { name, email, phone });
 
-  activeClients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({
-        type: 'start_call',
-        data: { name, email, phone }
-      }));
+  // Connect to Retell WebSocket
+  const socket = new WebSocket('wss://api.retellai.com/v1/connect', {
+    headers: {
+      Authorization: `Bearer 3464a52d1a75cde272dc29cc3b85`
     }
   });
 
-  res.status(200).send('Call triggered.');
-});
+  socket.on('open', () => {
+    console.log('WebSocket opened to Retell.');
 
-wss.on('connection', (ws) => {
-  console.log('WebSocket client connected.');
-  activeClients.push(ws);
+    socket.send(JSON.stringify({
+      phone_number: phone,
+      agent_id: "agent_e30590f7739653b4ee36652b49",
+      custom_fields: {
+        name,
+        email
+      }
+    }));
 
-  ws.on('close', () => {
-    activeClients = activeClients.filter(client => client !== ws);
-    console.log('WebSocket client disconnected.');
+    res.status(200).send('Triggered call successfully.');
+  });
+
+  socket.on('message', (data) => {
+    console.log('Retell Message:', data.toString());
+  });
+
+  socket.on('error', (error) => {
+    console.error('WebSocket error:', error.message);
   });
 });
 
