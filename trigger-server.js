@@ -13,7 +13,8 @@ app.post('/trigger-call', (req, res) => {
   const { name, email, phone } = req.body;
   console.log('Received trigger:', { name, email, phone });
 
-  const ws = new WebSocket('wss://api.retellai.com/ws');
+  // ✅ Add API key in WebSocket URL
+  const ws = new WebSocket(`wss://api.retellai.com/ws?api_key=${process.env.RETELL_API_KEY}`);
 
   ws.on('open', () => {
     console.log('WebSocket opened to Retell.');
@@ -21,7 +22,7 @@ app.post('/trigger-call', (req, res) => {
     ws.send(JSON.stringify({
       type: 'start_call',
       phone_number: phone,
-      agent_id: process.env.RETELL_AGENT_ID, // Make sure this is set in Render environment variables
+      agent_id: process.env.RETELL_AGENT_ID, 
       custom_fields: {
         name: name,
         email: email
