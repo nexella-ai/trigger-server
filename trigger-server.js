@@ -1,9 +1,7 @@
-// trigger-server.js
-
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const { confirmSlot } = require('./slot-manager');
+const { confirmSlot, isSlotAvailable } = require('./slot-manager'); // ⬅️ added isSlotAvailable
 
 const app = express();
 app.use(express.json());
@@ -26,6 +24,24 @@ app.post('/trigger-call', async (req, res) => {
   // Confirm slot lock
   if (!confirmSlot(startTime, userId)) {
     return res.status(409).json({ success: false, error: "Slot is no longer available." });
+  }
+
+  // ✅ Calendly double-booking check
+  try {
+    const available = await isSlotAvailable(startTime, endTime);
+    if (!available) {
+      console.log("❌ That time slot is already booked.");
+      return res.status(409).json({
+        success: false,
+        error: "That time slot is already booked. Please choose another."
+      });
+    }
+  } catch (checkErr) {
+    console.error("Error while checking slot availability:", checkErr);
+    return res.status(500).json({
+      success: false,
+      error: "Error checking Calendly availability."
+    });
   }
 
   // Use provided eventTypeUri or fallback to default
