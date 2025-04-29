@@ -164,17 +164,19 @@ app.post('/trigger-call', async (req, res) => {
     });
   }
 
-  const eventType = eventTypeUri || process.env.DEFAULT_EVENT_TYPE_URI;
+  // Step 4: Create the event
+  const eventType = eventTypeUri || process.env.CALENDLY_EVENT_TYPE_URI;
   if (!eventType) {
-    return res.status(400).json({ success: false, error: "Missing event type information." });
+    return res.status(400).json({ success: false, error: "Missing event type URI (eventTypeUri or CALENDLY_EVENT_TYPE_URI)." });
   }
 
   try {
     const calendlyResponse = await axios.post('https://api.calendly.com/scheduled_events', {
       event_type: eventType,
       invitee: {
-        name,
-        email
+        name: name || "Guest",
+        email,
+        phone_number: phone
       },
       start_time: startTime,
       end_time: endTime,
