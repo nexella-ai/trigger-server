@@ -46,25 +46,27 @@ function releaseSlot(startTime, userId) {
 
 async function isSlotAvailable(startTime, endTime) {
   try {
-    const userUri = process.env.CALENDLY_USER_URI;
-    if (!userUri) throw new Error("Missing CALENDLY_USER_URI in environment variables");
+    const eventTypeUri = process.env.CALENDLY_EVENT_TYPE_URI;
+    if (!eventTypeUri) throw new Error("Missing CALENDLY_EVENT_TYPE_URI in environment variables");
 
-    const response = await axios.get('https://api.calendly.com/scheduled_events', {
-      params: {
-        user_uri: userUri,
-        min_start_time: startTime,
-        max_start_time: endTime
+    const response = await axios.post(
+      'https://api.calendly.com/availability',
+      {
+        event_type: eventTypeUri,
+        start_time: startTime,
+        end_time: endTime
       },
-      headers: {
-        Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
-        'Content-Type': 'application/json'
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
       }
-    });
+    );
 
-    const events = response.data.collection || [];
-    return events.length === 0; // slot is available if no events overlap
+    return response.data.available;
   } catch (error) {
-    console.error('Error checking slot availability:', error.response?.data || error.message);
+    console.error('Calendly availability error:', error.response?.data || error.message);
     throw error;
   }
 }
