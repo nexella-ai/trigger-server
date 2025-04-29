@@ -21,16 +21,16 @@ app.get('/health', (req, res) => {
 app.get('/check-availability', async (req, res) => {
   try {
     const { startTime, endTime } = req.query;
-    
+
     if (!startTime || !endTime) {
       return res.status(400).json({ 
         success: false, 
         error: "Missing startTime or endTime" 
       });
     }
-    
+
     const available = await isSlotAvailable(startTime, endTime);
-    
+
     res.status(200).json({
       success: true,
       available
@@ -48,16 +48,16 @@ app.get('/check-availability', async (req, res) => {
 app.get('/available-slots', async (req, res) => {
   try {
     const { date } = req.query;
-    
+
     if (!date) {
       return res.status(400).json({ 
         success: false, 
         error: "Missing date parameter" 
       });
     }
-    
+
     const availableSlots = await getAvailableSlots(date);
-    
+
     res.status(200).json({
       success: true,
       availableSlots
@@ -75,16 +75,16 @@ app.get('/available-slots', async (req, res) => {
 app.post('/lock-slot', (req, res) => {
   try {
     const { startTime, endTime, userId } = req.body;
-    
+
     if (!startTime || !userId) {
       return res.status(400).json({ 
         success: false, 
         error: "Missing required fields" 
       });
     }
-    
+
     const success = lockSlot(startTime, userId);
-    
+
     res.status(success ? 200 : 409).json({
       success,
       message: success ? "Slot locked successfully" : "Slot is already locked"
@@ -102,16 +102,16 @@ app.post('/lock-slot', (req, res) => {
 app.post('/release-slot', (req, res) => {
   try {
     const { startTime, userId } = req.body;
-    
+
     if (!startTime || !userId) {
       return res.status(400).json({ 
         success: false, 
         error: "Missing required fields" 
       });
     }
-    
+
     const success = releaseSlot(startTime, userId);
-    
+
     res.status(success ? 200 : 404).json({
       success,
       message: success ? "Slot released successfully" : "No matching lock found"
@@ -131,16 +131,22 @@ app.post('/trigger-call', async (req, res) => {
 
   console.log('Received trigger from AI:', { name, email, phone, startTime, endTime, userId });
 
-  if (!phone || !startTime || !endTime) {
+  if (!phone || !startTime || !endTime || !userId) {
     return res.status(400).json({ success: false, error: "Missing required fields." });
   }
 
-  // Confirm slot lock
+  // Step 1: Attempt to lock the slot
+  const locked = lockSlot(startTime, userId);
+  if (!locked) {
+    return res.status(409).json({ success: false, error: "Slot is already locked by another user." });
+  }
+
+  // Step 2: Confirm the lock
   if (!confirmSlot(startTime, userId)) {
     return res.status(409).json({ success: false, error: "Slot is no longer available." });
   }
 
-  // Double-booking check
+  // Step 3: Check Calendly to make sure it hasn't been taken externally
   try {
     const available = await isSlotAvailable(startTime, endTime);
     if (!available) {
@@ -158,14 +164,12 @@ app.post('/trigger-call', async (req, res) => {
     });
   }
 
-  // Use provided eventTypeUri or fallback to default
   const eventType = eventTypeUri || process.env.DEFAULT_EVENT_TYPE_URI;
   if (!eventType) {
     return res.status(400).json({ success: false, error: "Missing event type information." });
   }
 
   try {
-    // Book the meeting in Calendly
     const calendlyResponse = await axios.post('https://api.calendly.com/scheduled_events', {
       event_type: eventType,
       invitee: {
@@ -174,7 +178,7 @@ app.post('/trigger-call', async (req, res) => {
       },
       start_time: startTime,
       end_time: endTime,
-      timezone: "America/Los_Angeles" // you can make this dynamic if needed
+      timezone: "America/Los_Angeles"
     }, {
       headers: {
         Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
@@ -184,7 +188,6 @@ app.post('/trigger-call', async (req, res) => {
 
     console.log('✅ Meeting booked on Calendly:', calendlyResponse.data);
 
-    // Also send to make.com for any additional automation
     try {
       await axios.post('https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei', {
         name,
@@ -192,7 +195,7 @@ app.post('/trigger-call', async (req, res) => {
         phone,
         appointmentDate: new Date(startTime).toLocaleDateString(),
         appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
-          hour: 'numeric', 
+          hour: 'numeric',
           minute: '2-digit',
           hour12: true
         }),
@@ -201,7 +204,6 @@ app.post('/trigger-call', async (req, res) => {
       console.log('✅ Booking information sent to make.com');
     } catch (makeError) {
       console.error('❌ Error sending to make.com:', makeError.message);
-      // Continue even if make.com fails - the Calendly booking was successful
     }
 
     res.status(200).json({
@@ -221,7 +223,6 @@ app.post('/trigger-call', async (req, res) => {
   }
 });
 
-// Server listen
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Trigger server running on port ${PORT}`);
