@@ -50,7 +50,7 @@ async function isSlotAvailable(startTime, endTime) {
     if (!eventTypeUri) {
       throw new Error("Missing DEFAULT_EVENT_TYPE_URI in environment variables");
     }
-    const eventTypeUuid = eventTypeUri.split('/').pop();
+    const eventTypeUuid = eventTypeUri;
 
     const startDate = new Date(startTime);
     const endDate = new Date(endTime);
@@ -61,7 +61,7 @@ async function isSlotAvailable(startTime, endTime) {
 
     const response = await axios.get(`https://api.calendly.com/event_type_available_times`, {
       params: {
-        event_type: eventTypeUuid,
+        event_type: eventTypeUri,
         start_time: dayStart.toISOString(),
         end_time: dayEnd.toISOString()
       },
