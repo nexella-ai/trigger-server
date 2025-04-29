@@ -46,25 +46,23 @@ function releaseSlot(startTime, userId) {
 
 async function isSlotAvailable(startTime, endTime) {
   try {
-    const eventTypeUri = process.env.CALENDLY_EVENT_TYPE_URI;
-    if (!eventTypeUri) throw new Error("Missing CALENDLY_EVENT_TYPE_URI in environment variables");
+    const userUri = process.env.CALENDLY_USER_URI;
+    if (!userUri) throw new Error("Missing CALENDLY_USER_URI in environment variables");
 
-    const response = await axios.post(
-      'https://api.calendly.com/availability',
-      {
-        event_type: eventTypeUri,
-        start_time: startTime,
-        end_time: endTime
+    const response = await axios.get('https://api.calendly.com/scheduled_events', {
+      params: {
+        user_uri: userUri,
+        min_start_time: startTime,
+        max_start_time: endTime
       },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
+      headers: {
+        Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
+        'Content-Type': 'application/json'
       }
-    );
+    });
 
-    return response.data.available;
+    const events = response.data.collection || [];
+    return events.length === 0; // slot is available if no events overlap
   } catch (error) {
     console.error('Calendly availability error:', error.response?.data || error.message);
     throw error;
@@ -96,7 +94,6 @@ async function getAvailableSlots(date) {
     const scheduledEvents = response.data.collection || [];
     const eventTimes = scheduledEvents.map(event => new Date(event.start_time).toISOString());
 
-    // For example, let's assume static 30-min intervals for demo purposes
     const potentialSlots = [];
     for (let hour = 8; hour < 17; hour++) {
       for (let min of [0, 30]) {
