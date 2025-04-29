@@ -51,7 +51,7 @@ async function isSlotAvailable(startTime, endTime) {
 
     const response = await axios.get('https://api.calendly.com/scheduled_events', {
       params: {
-        user: userUri,
+        user_uri: userUri,
         min_start_time: startTime,
         max_start_time: endTime
       },
@@ -81,7 +81,7 @@ async function getAvailableSlots(date) {
 
     const response = await axios.get('https://api.calendly.com/scheduled_events', {
       params: {
-        user: userUri,
+        user_uri: userUri,
         min_start_time: startOfDay.toISOString(),
         max_start_time: endOfDay.toISOString()
       },
