@@ -46,24 +46,14 @@ function releaseSlot(startTime, userId) {
 
 async function isSlotAvailable(startTime, endTime) {
   try {
-    const eventTypeUri = process.env.DEFAULT_EVENT_TYPE_URI;
-    if (!eventTypeUri) {
-      throw new Error("Missing DEFAULT_EVENT_TYPE_URI in environment variables");
-    }
-    const eventTypeUuid = eventTypeUri.split('/').pop();
+    const userUri = process.env.CALENDLY_USER_URI;
+    if (!userUri) throw new Error("Missing CALENDLY_USER_URI in environment variables");
 
-    const startDate = new Date(startTime);
-    const endDate = new Date(endTime);
-    const dayStart = new Date(startDate);
-    dayStart.setUTCHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
-
-    const response = await axios.get(`https://api.calendly.com/event_type_available_times`, {
+    const response = await axios.get('https://api.calendly.com/scheduled_events', {
       params: {
-        event_type: eventTypeUuid,
-        start_time: dayStart.toISOString(),
-        end_time: dayEnd.toISOString()
+        user: userUri,
+        min_start_time: startTime,
+        max_start_time: endTime
       },
       headers: {
         Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
@@ -71,13 +61,8 @@ async function isSlotAvailable(startTime, endTime) {
       }
     });
 
-    const availableTimes = response.data.collection;
-    return availableTimes.some(slot => {
-      const slotStart = new Date(slot.start_time).getTime();
-      const slotEnd = new Date(slot.end_time).getTime();
-      return slotStart === new Date(startTime).getTime() &&
-             slotEnd === new Date(endTime).getTime();
-    });
+    const events = response.data.collection || [];
+    return events.length === 0; // slot is available if no events overlap
   } catch (error) {
     console.error('Error checking slot availability:', error.response?.data || error.message);
     throw error;
@@ -86,27 +71,19 @@ async function isSlotAvailable(startTime, endTime) {
 
 async function getAvailableSlots(date) {
   try {
-    const eventTypeUri = process.env.DEFAULT_EVENT_TYPE_URI;
-    if (!eventTypeUri) {
-      throw new Error("Missing DEFAULT_EVENT_TYPE_URI in environment variables");
-    }
-    const eventTypeUuid = eventTypeUri.split('/').pop();
+    const userUri = process.env.CALENDLY_USER_URI;
+    if (!userUri) throw new Error("Missing CALENDLY_USER_URI in environment variables");
 
-    let formattedDate = date;
-    if (date instanceof Date) {
-      formattedDate = date.toISOString().split('T')[0];
-    }
-
-    const startOfDay = new Date(formattedDate);
+    const startOfDay = new Date(date);
     startOfDay.setUTCHours(0, 0, 0, 0);
     const endOfDay = new Date(startOfDay);
     endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
 
-    const response = await axios.get(`https://api.calendly.com/event_type_available_times`, {
+    const response = await axios.get('https://api.calendly.com/scheduled_events', {
       params: {
-        event_type: eventTypeUuid,
-        start_time: startOfDay.toISOString(),
-        end_time: endOfDay.toISOString()
+        user: userUri,
+        min_start_time: startOfDay.toISOString(),
+        max_start_time: endOfDay.toISOString()
       },
       headers: {
         Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
@@ -114,16 +91,27 @@ async function getAvailableSlots(date) {
       }
     });
 
-    const availableTimes = response.data.collection;
-    return availableTimes
-      .filter(slot => {
-        return !lockedSlots.has(slot.start_time) || 
-               lockedSlots.get(slot.start_time).expiresAt < Date.now();
-      })
-      .map(slot => ({
-        startTime: slot.start_time,
-        endTime: slot.end_time
-      }));
+    const scheduledEvents = response.data.collection || [];
+    const eventTimes = scheduledEvents.map(event => new Date(event.start_time).toISOString());
+
+    // For example, let's assume static 30-min intervals for demo purposes
+    const potentialSlots = [];
+    for (let hour = 8; hour < 17; hour++) {
+      for (let min of [0, 30]) {
+        const slot = new Date(startOfDay);
+        slot.setUTCHours(hour, min, 0, 0);
+        const slotIso = slot.toISOString();
+        if (!eventTimes.includes(slotIso) &&
+            (!lockedSlots.has(slotIso) || lockedSlots.get(slotIso).expiresAt < Date.now())) {
+          potentialSlots.push({
+            startTime: slotIso,
+            endTime: new Date(slot.getTime() + 30 * 60000).toISOString()
+          });
+        }
+      }
+    }
+
+    return potentialSlots;
   } catch (error) {
     console.error('Error getting available slots:', error.response?.data || error.message);
     return [];
