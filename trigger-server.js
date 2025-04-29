@@ -1,70 +1,62 @@
 // trigger-server.js
 
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const bodyParser = require('body-parser');
+// Load environment variables
 require('dotenv').config();
 
+const express = require('express');
+const axios = require('axios');
+
 const app = express();
-const server = http.createServer(app);
+app.use(express.json());
 
-app.use(bodyParser.json());
+app.post('/trigger-call', async (req, res) => {
+  const { name, email, phone, prompt, tags, agent_id } = req.body;
 
-app.post('/trigger-call', (req, res) => {
-  const { name, email, phone } = req.body;
-  console.log('Received trigger:', { name, email, phone });
+  console.log('Received trigger from LLM worker:', { name, email, phone, prompt, tags, agent_id });
 
-  const ws = new WebSocket('wss://api.retellai.com/ws');
+  // Check if required fields are present
+  if (!phone) {
+    return res.status(400).json({ success: false, error: "Phone number is required." });
+  }
 
-  ws.on('open', () => {
-    console.log('WebSocket opened to Retell.');
+  try {
+    const response = await axios.post('https://api.retellai.com/v2/create-phone-call', {
+      from_number: process.env.RETELL_FROM_NUMBER,     // Use environment variable
+      to_number: phone,
+      agent_id: agent_id || process.env.RETELL_AGENT_ID, // Allow override
+      custom_fields: {
+        name,
+        email,
+        prompt,
+        tags
+      }
+    }, {
+      headers: {
+        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    // Step 1: Subscribe first
-    const subscribePayload = {
-      type: 'subscribe',
-      api_key: process.env.RETELL_API_KEY
-    };
+    console.log('✅ Retell call triggered successfully:', response.data);
 
-    console.log('Sending subscribe payload:', subscribePayload);
-    ws.send(JSON.stringify(subscribePayload));
-  });
+    res.status(200).json({
+      success: true,
+      message: 'Call triggered successfully.',
+      retell_response: response.data
+    });
+  } catch (error) {
+    const err = error.response?.data || error.message;
+    console.error('❌ Error triggering Retell call:', err);
 
-  ws.on('message', (message) => {
-    console.log('Received from Retell:', message.toString());
-    const parsed = JSON.parse(message);
-
-    if (parsed.type === 'subscribed') {
-      console.log('Subscribed successfully, sending start_call...');
-
-      // Step 2: After subscribed, send start_call
-      const startCallPayload = {
-        type: 'start_call',
-        agent_id: process.env.RETELL_AGENT_ID,
-        phone_number: phone,
-        custom_fields: {
-          name: name,
-          email: email
-        }
-      };
-
-      console.log('Sending start_call payload:', startCallPayload);
-      ws.send(JSON.stringify(startCallPayload));
-    }
-  });
-
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-  });
-
-  ws.on('close', () => {
-    console.log('WebSocket closed.');
-  });
-
-  res.status(200).send('Trigger received.');
+    res.status(500).json({
+      success: false,
+      message: 'Failed to trigger call.',
+      error: err
+    });
+  }
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`Trigger WebSocket Server running on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`🚀 Trigger server running on port ${PORT}`);
 });
