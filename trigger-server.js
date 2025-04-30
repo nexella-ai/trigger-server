@@ -232,7 +232,7 @@ app.post('/trigger-call', async (req, res) => {
   // If we're just triggering a call without booking (or booking failed)
   try {
     // Make outbound call with Retell
-    const retellResponse = await axios.post('https://api.retellai.com/v1/calls', {
+    const retellResponse = await axios.post('https://api.retellai.com/v1/call/create-phone-call', {
       from_number: process.env.RETELL_FROM_NUMBER,
       to_number: phone,
       agent_id: process.env.RETELL_AGENT_ID,
@@ -279,7 +279,7 @@ app.post('/trigger-retell-call', async (req, res) => {
     console.log('Triggering Retell call with:', { name, email, phone });
     
     // Make outbound call with Retell - UPDATED ENDPOINT
-    const response = await axios.post('https://api.retellai.com/v1/calls', {
+    const response = await axios.post('https://api.retellai.com/v1/call/create-phone-call', {
       from_number: process.env.RETELL_FROM_NUMBER,
       to_number: phone,
       agent_id: process.env.RETELL_AGENT_ID,
