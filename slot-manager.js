@@ -1,126 +1,65 @@
-require('dotenv').config();
+// slot-manager.js
 const axios = require('axios');
+const { v4: uuidv4 } = require('uuid');
 
-// In-memory store for slot reservations (would use Redis in production)
-const lockedSlots = new Map();
+const CALENDLY_API_BASE = 'https://api.calendly.com';
+const CALENDLY_USER_ID = process.env.CALENDLY_USER_ID; // should be just the UUID, not full URI
+const CALENDLY_AUTH_HEADER = {
+  Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
+  'Content-Type': 'application/json',
+};
 
-function lockSlot(startTime, userId, expirationSeconds = 300) {
-  const key = startTime;
-  if (lockedSlots.has(key) && lockedSlots.get(key).userId !== userId) {
-    return false;
-  }
-  lockedSlots.set(key, {
-    userId,
-    expiresAt: Date.now() + (expirationSeconds * 1000)
-  });
-  setTimeout(() => {
-    const lock = lockedSlots.get(key);
-    if (lock && lock.userId === userId) {
-      lockedSlots.delete(key);
-      console.log(`Lock for slot ${key} expired and was released`);
-    }
-  }, expirationSeconds * 1000);
-  return true;
-}
-
-function confirmSlot(startTime, userId) {
-  const key = startTime;
-  if (lockedSlots.has(key)) {
-    const lock = lockedSlots.get(key);
-    if (lock.userId === userId && lock.expiresAt > Date.now()) {
-      lockedSlots.delete(key);
-      return true;
-    }
-  }
-  return false;
-}
-
-function releaseSlot(startTime, userId) {
-  const key = startTime;
-  if (lockedSlots.has(key) && lockedSlots.get(key).userId === userId) {
-    lockedSlots.delete(key);
-    return true;
-  }
-  return false;
+function toISO(date) {
+  return new Date(date).toISOString();
 }
 
 async function isSlotAvailable(startTime, endTime) {
-  try {
-    const userUri = process.env.CALENDLY_USER_URI;
-    if (!userUri) throw new Error("Missing CALENDLY_USER_URI in environment variables");
+  const response = await axios.get(`${CALENDLY_API_BASE}/scheduled_events`, {
+    headers: CALENDLY_AUTH_HEADER,
+    params: {
+      user: CALENDLY_USER_ID,
+      min_start_time: toISO(startTime),
+      max_start_time: toISO(endTime),
+    },
+  });
 
-    const response = await axios.get('https://api.calendly.com/scheduled_events', {
-      params: {
-        user_uri: userUri,
-        min_start_time: startTime,
-        max_start_time: endTime
-      },
-      headers: {
-        Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const events = response.data.collection || [];
-    return events.length === 0; // slot is available if no events overlap
-  } catch (error) {
-    console.error('Calendly availability error:', error.response?.data || error.message);
-    throw error;
-  }
+  const events = response.data.collection || [];
+  return events.length === 0;
 }
 
-async function getAvailableSlots(date) {
-  try {
-    const userUri = process.env.CALENDLY_USER_URI;
-    if (!userUri) throw new Error("Missing CALENDLY_USER_URI in environment variables");
+async function createEvent({ name, email, phone, startTime, endTime }) {
+  const payload = {
+    invitee: {
+      email,
+      name,
+      phone_number: phone,
+    },
+    event_type: `${CALENDLY_API_BASE}/event_types/${process.env.CALENDLY_EVENT_TYPE_ID}`,
+    start_time: toISO(startTime),
+    end_time: toISO(endTime),
+    name,
+  };
 
-    const startOfDay = new Date(date);
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
+  const response = await axios.post(`${CALENDLY_API_BASE}/scheduled_events`, payload, {
+    headers: CALENDLY_AUTH_HEADER,
+  });
 
-    const response = await axios.get('https://api.calendly.com/scheduled_events', {
-      params: {
-        user_uri: userUri,
-        min_start_time: startOfDay.toISOString(),
-        max_start_time: endOfDay.toISOString()
-      },
-      headers: {
-        Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
+  return response.data.resource;
+}
 
-    const scheduledEvents = response.data.collection || [];
-    const eventTimes = scheduledEvents.map(event => new Date(event.start_time).toISOString());
+async function scheduleCall({ name, email, phone, startTime, endTime }) {
+  const available = await isSlotAvailable(startTime, endTime);
 
-    const potentialSlots = [];
-    for (let hour = 8; hour < 17; hour++) {
-      for (let min of [0, 30]) {
-        const slot = new Date(startOfDay);
-        slot.setUTCHours(hour, min, 0, 0);
-        const slotIso = slot.toISOString();
-        if (!eventTimes.includes(slotIso) &&
-            (!lockedSlots.has(slotIso) || lockedSlots.get(slotIso).expiresAt < Date.now())) {
-          potentialSlots.push({
-            startTime: slotIso,
-            endTime: new Date(slot.getTime() + 30 * 60000).toISOString()
-          });
-        }
-      }
-    }
-
-    return potentialSlots;
-  } catch (error) {
-    console.error('Error getting available slots:', error.response?.data || error.message);
-    return [];
+  if (!available) {
+    throw new Error('Time slot is not available');
   }
+
+  const event = await createEvent({ name, email, phone, startTime, endTime });
+  return event;
 }
 
 module.exports = {
-  lockSlot,
-  confirmSlot,
-  releaseSlot,
   isSlotAvailable,
-  getAvailableSlots
+  createEvent,
+  scheduleCall,
 };
