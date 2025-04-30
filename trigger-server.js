@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const Retell = require('retell-sdk').default;
 const { 
   lockSlot, 
   confirmSlot, 
@@ -11,6 +12,17 @@ const {
 
 const app = express();
 app.use(express.json());
+
+// Initialize Retell SDK client
+let retellClient = null;
+try {
+  retellClient = new Retell({
+    apiKey: process.env.RETELL_API_KEY,
+  });
+  console.log('✅ Retell client initialized successfully');
+} catch (error) {
+  console.error('❌ Error initializing Retell client:', error.message);
+}
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -135,61 +147,114 @@ app.post('/release-slot', (req, res) => {
   }
 });
 
-// *** YOUR WORKING ENDPOINT - KEEP AS IS BUT ADD THE needs_scheduling FLAG ***
-// Endpoint to trigger a Retell call (FIRST action - no Calendly scheduling yet)
+// Updated endpoint to trigger a Retell call using SDK
 app.post('/trigger-retell-call', async (req, res) => {
   try {
     const { name, email, phone, userId } = req.body;
+    
     if (!phone) {
       return res.status(400).json({ 
         success: false, 
         error: "Missing phone number field" 
       });
     }
+    
     console.log('Triggering Retell call with:', { name, email, phone });
-    const response = await axios.post('https://api.retellai.com/v1/calls', {
-      from_number: process.env.RETELL_FROM_NUMBER,
-      to_number: phone,
-      agent_id: process.env.RETELL_AGENT_ID,
-      metadata: {
-        customer_name: name || "",
-        customer_email: email || "",
-        user_id: userId || `user_${Date.now()}`,
-        needs_scheduling: true, // Add this flag to indicate schedule after discovery
-        call_source: "website_form"
-      }
-    }, {
-      headers: {
-        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
     
-    // Store the call in our active calls map
-    const callId = response.data.call_id;
-    activeCalls.set(callId, {
-      id: callId,
-      phone,
-      name,
-      email,
-      userId: userId || `user_${Date.now()}`,
-      startTime: Date.now(),
-      state: 'initiated',
-      discoveryComplete: false,
-      schedulingComplete: false
-    });
+    // First try using the SDK
+    if (retellClient) {
+      try {
+        const response = await retellClient.call.createPhoneCall({
+          from_number: process.env.RETELL_FROM_NUMBER,
+          to_number: phone,
+          agent_id: process.env.RETELL_AGENT_ID,
+          metadata: {
+            customer_name: name || "",
+            customer_email: email || "",
+            user_id: userId || `user_${Date.now()}`,
+            needs_scheduling: true,
+            call_source: "website_form"
+          }
+        });
+        
+        // Store the call in our active calls map
+        const callId = response.call_id;
+        activeCalls.set(callId, {
+          id: callId,
+          phone,
+          name,
+          email,
+          userId: userId || `user_${Date.now()}`,
+          startTime: Date.now(),
+          state: 'initiated',
+          discoveryComplete: false,
+          schedulingComplete: false
+        });
+        
+        console.log('✅ Retell outbound call initiated with SDK:', response);
+        return res.status(200).json({
+          success: true,
+          message: 'Outbound call initiated successfully',
+          call_id: response.call_id
+        });
+      } catch (sdkError) {
+        console.error('❌ SDK Error initiating Retell call:', sdkError);
+        // Fall through to the axios fallback
+      }
+    }
     
-    console.log('✅ Retell outbound call initiated:', response.data);
-    res.status(200).json({
-      success: true,
-      message: 'Outbound call initiated successfully',
-      call_id: response.data.call_id
-    });
+    // Fallback to direct axios call if SDK fails or isn't initialized
+    try {
+      const response = await axios.post('https://api.retellai.com/v1/calls', {
+        from_number: process.env.RETELL_FROM_NUMBER,
+        to_number: phone,
+        agent_id: process.env.RETELL_AGENT_ID,
+        metadata: {
+          customer_name: name || "",
+          customer_email: email || "",
+          user_id: userId || `user_${Date.now()}`,
+          needs_scheduling: true,
+          call_source: "website_form"
+        }
+      }, {
+        headers: {
+          Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      // Store the call in our active calls map
+      const callId = response.data.call_id;
+      activeCalls.set(callId, {
+        id: callId,
+        phone,
+        name,
+        email,
+        userId: userId || `user_${Date.now()}`,
+        startTime: Date.now(),
+        state: 'initiated',
+        discoveryComplete: false,
+        schedulingComplete: false
+      });
+      
+      console.log('✅ Retell outbound call initiated with axios:', response.data);
+      return res.status(200).json({
+        success: true,
+        message: 'Outbound call initiated successfully',
+        call_id: response.data.call_id
+      });
+    } catch (error) {
+      console.error('❌ Error initiating Retell call:', error.response?.data || error.message);
+      return res.status(500).json({
+        success: false,
+        error: error.response?.data || error.message
+      });
+    }
   } catch (error) {
-    console.error('❌ Error initiating Retell call:', error.response?.data || error.message);
+    console.error('❌ Error in trigger-retell-call endpoint:', error);
     res.status(500).json({
       success: false,
-      error: error.response?.data || error.message
+      error: "Internal server error"
     });
   }
 });
@@ -586,9 +651,27 @@ app.post('/schedule-appointment', async (req, res) => {
   }
 });
 
-// Test endpoint for Retell API
+// Test endpoint for Retell API using the SDK
 app.get('/test-retell-api', async (req, res) => {
   try {
+    // First try with SDK
+    if (retellClient) {
+      try {
+        const agents = await retellClient.agent.list();
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Successfully connected to Retell API using SDK',
+          agents_count: agents.agents?.length || 0,
+          method: 'sdk'
+        });
+      } catch (sdkError) {
+        console.error('❌ SDK Error connecting to Retell API:', sdkError);
+        // Fall through to axios fallback
+      }
+    }
+    
+    // Fallback to axios
     if (!process.env.RETELL_API_KEY) {
       return res.status(500).json({
         success: false,
@@ -605,8 +688,9 @@ app.get('/test-retell-api', async (req, res) => {
     
     res.status(200).json({
       success: true,
-      message: 'Successfully connected to Retell API',
-      agents_count: response.data.agents?.length || 0
+      message: 'Successfully connected to Retell API using axios',
+      agents_count: response.data.agents?.length || 0,
+      method: 'axios'
     });
   } catch (error) {
     console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
