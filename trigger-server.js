@@ -5,7 +5,7 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-<<<<<<< HEAD
+
 // Health check
 =======
 // Request logging middleware
@@ -21,7 +21,7 @@ app.get('/health', (req, res) => {
   res.status(200).send('Trigger server is healthy.');
 });
 
-<<<<<<< HEAD
+
 // ✅ Simple endpoint to trigger a Retell call
 app.post('/trigger-retell-call', async (req, res) => {
   const { name, email, phone, userId } = req.body;
@@ -30,7 +30,7 @@ app.post('/trigger-retell-call', async (req, res) => {
     return res.status(400).json({
       success: false,
       error: "Missing phone number field"
-=======
+
 // Endpoint to check slot availability
 app.get('/check-availability', async (req, res) => {
   try {
@@ -245,11 +245,11 @@ app.post('/schedule-appointment', async (req, res) => {
     return res.status(400).json({
       success: false,
       error: "Missing required scheduling information."
->>>>>>> 69ea29e (initial commit of trigger server with Retell integration)
+ 69ea29e (initial commit of trigger server with Retell integration)
     });
   }
 
-<<<<<<< HEAD
+
   console.log('Triggering Retell call with:', { name, email, phone });
 
   try {
@@ -276,7 +276,7 @@ app.post('/schedule-appointment', async (req, res) => {
       message: 'Outbound call initiated successfully',
       call_id: response.data.call_id
     });
-=======
+
 // Endpoint to trigger a Retell call without scheduling
 app.post('/trigger-retell-call', async (req, res) => {
   try {
@@ -360,7 +360,7 @@ app.post('/trigger-retell-call', async (req, res) => {
         error: error.response?.data || error.message
       });
     }
->>>>>>> 69ea29e (initial commit of trigger server with Retell integration)
+ 69ea29e (initial commit of trigger server with Retell integration)
   } catch (error) {
     console.error('❌ Error in trigger-retell-call endpoint:', error);
     res.status(500).json({
