@@ -16,19 +16,143 @@ app.use(express.json());
 // Set the default Make.com webhook URL
 const DEFAULT_MAKE_WEBHOOK_URL = 'https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei';
 
-// Helper function to send data to Make.com webhook
+// Helper function to parse a date and time string
+function parseDateTime(dateStr, timeStr) {
+  try {
+    // Handle common day formats
+    const days = {
+      'monday': 1, 'tuesday': 2, 'wednesday': 3, 'thursday': 4,
+      'friday': 5, 'saturday': 6, 'sunday': 0,
+      'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6, 'sun': 0
+    };
+    
+    const now = new Date();
+    const currentDay = now.getDay();
+    
+    // Extract day from string
+    let targetDay = null;
+    for (const [dayName, dayNumber] of Object.entries(days)) {
+      if (dateStr.toLowerCase().includes(dayName)) {
+        targetDay = dayNumber;
+        break;
+      }
+    }
+    
+    if (targetDay === null) {
+      throw new Error(`Could not parse day from "${dateStr}"`);
+    }
+    
+    // Calculate days to add
+    let daysToAdd = targetDay - currentDay;
+    if (daysToAdd <= 0) {
+      daysToAdd += 7; // Move to next week if day has passed
+    }
+    
+    // Create target date
+    const targetDate = new Date(now);
+    targetDate.setDate(now.getDate() + daysToAdd);
+    targetDate.setHours(0, 0, 0, 0);
+    
+    // Parse time
+    // Example formats: "11am", "11:00 AM", "2pm", "14:00"
+    let hours = 0;
+    let minutes = 0;
+    
+    // Remove all spaces from time string
+    const cleanTime = timeStr.toLowerCase().replace(/\s+/g, '');
+    
+    if (cleanTime.includes(':')) {
+      // Format like "11:00am"
+      const timeParts = cleanTime.split(':');
+      hours = parseInt(timeParts[0], 10);
+      
+      if (timeParts[1].includes('pm') && hours < 12) {
+        hours += 12;
+      } else if (timeParts[1].includes('am') && hours === 12) {
+        hours = 0;
+      }
+      
+      minutes = parseInt(timeParts[1].replace(/[^\d]/g, ''), 10);
+    } else {
+      // Format like "11am"
+      hours = parseInt(cleanTime.replace(/[^\d]/g, ''), 10);
+      if (cleanTime.includes('pm') && hours < 12) {
+        hours += 12;
+      } else if (cleanTime.includes('am') && hours === 12) {
+        hours = 0;
+      }
+      minutes = 0;
+    }
+    
+    // Set time on target date
+    targetDate.setHours(hours, minutes, 0, 0);
+    
+    // Create end time (1 hour later)
+    const endDate = new Date(targetDate);
+    endDate.setHours(endDate.getHours() + 1);
+    
+    return {
+      startTime: targetDate.toISOString(),
+      endTime: endDate.toISOString(),
+      formattedDate: targetDate.toLocaleDateString(),
+      formattedTime: targetDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    };
+  } catch (error) {
+    console.error('Error parsing date/time:', error);
+    throw new Error(`Failed to parse date "${dateStr}" and time "${timeStr}": ${error.message}`);
+  }
+}
+
+// Enhanced helper function to send data to Make.com webhook
 async function notifyMakeWebhook(data) {
-  console.log('Sending data to Make.com webhook:', JSON.stringify(data, null, 2));
+  console.log('🚀 PREPARING TO SEND DATA TO MAKE.COM WEBHOOK:', JSON.stringify(data, null, 2));
   
   try {
-    const response = await axios.post(DEFAULT_MAKE_WEBHOOK_URL, data);
-    console.log(`✅ Data sent to Make.com webhook. Response status: ${response.status}`);
+    // Add timestamp to webhook data
+    const webhookData = {
+      ...data,
+      timestamp: new Date().toISOString(),
+      webhook_version: '1.1'
+    };
+    
+    console.log('📤 SENDING DATA TO MAKE.COM WEBHOOK:', JSON.stringify(webhookData, null, 2));
+    
+    const response = await axios.post(DEFAULT_MAKE_WEBHOOK_URL, webhookData, {
+      timeout: 10000, // 10 second timeout
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Source': 'Nexella-Server'
+      }
+    });
+    
+    console.log(`✅ DATA SENT TO MAKE.COM WEBHOOK. Response status: ${response.status}`);
+    console.log(`✅ RESPONSE DETAILS:`, JSON.stringify(response.data || {}, null, 2));
     return true;
   } catch (error) {
-    console.error(`❌ Error sending data to Make.com webhook: ${error.message}`);
+    console.error(`❌ ERROR SENDING DATA TO MAKE.COM WEBHOOK: ${error.message}`);
     if (error.response) {
-      console.error('Response details:', error.response.status, error.response.data);
+      console.error('❌ RESPONSE ERROR DETAILS:', {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('❌ REQUEST ERROR: No response received', error.request);
+    } else {
+      console.error('❌ SETUP ERROR:', error.message);
     }
+    
+    // Retry logic
+    console.log('🔄 Attempting to retry webhook notification in 3 seconds...');
+    setTimeout(async () => {
+      try {
+        const retryResponse = await axios.post(DEFAULT_MAKE_WEBHOOK_URL, data);
+        console.log(`✅ RETRY SUCCESSFUL. Response status: ${retryResponse.status}`);
+      } catch (retryError) {
+        console.error(`❌ RETRY FAILED: ${retryError.message}`);
+      }
+    }, 3000);
+    
     return false;
   }
 }
@@ -311,7 +435,7 @@ app.post('/trigger-retell-call', async (req, res) => {
   }
 });
 
-// New endpoint for scheduling after discovery (called by Retell AI agent)
+// Enhanced endpoint for scheduling after discovery (called by Retell AI agent)
 app.post('/schedule-calendly', async (req, res) => {
   try {
     const { 
@@ -321,11 +445,13 @@ app.post('/schedule-calendly', async (req, res) => {
       phone, 
       startTime, 
       endTime, 
-      userId 
+      userId,
+      scheduleDay,
+      scheduleTime 
     } = req.body;
     
     console.log('Received calendly scheduling request:', { 
-      call_id, name, email, phone, startTime, endTime 
+      call_id, name, email, phone, startTime, endTime, scheduleDay, scheduleTime
     });
     
     // Verify that discovery is complete if we're tracking this call
@@ -336,11 +462,43 @@ app.post('/schedule-calendly', async (req, res) => {
       // Continue anyway since the AI agent is responsible for ensuring discovery is done
     }
     
+    // Validate and parse date/time if provided as separate values
+    let validatedStartTime = startTime;
+    let validatedEndTime = endTime;
+    let formattedDate = null;
+    let formattedTime = null;
+    
+    if (scheduleDay && scheduleTime && !startTime) {
+      // Parse natural language date and time 
+      try {
+        const parsedDateTime = parseDateTime(scheduleDay, scheduleTime);
+        validatedStartTime = parsedDateTime.startTime;
+        validatedEndTime = parsedDateTime.endTime;
+        formattedDate = parsedDateTime.formattedDate;
+        formattedTime = parsedDateTime.formattedTime;
+        
+        console.log('✅ Parsed date/time successfully:', {
+          scheduleDay,
+          scheduleTime,
+          parsedStartTime: validatedStartTime,
+          parsedEndTime: validatedEndTime,
+          formattedDate,
+          formattedTime
+        });
+      } catch (parseError) {
+        console.error('❌ Error parsing date/time:', parseError.message);
+        return res.status(400).json({
+          success: false,
+          error: `Unable to parse the requested date and time. Please provide a clear date and time.`
+        });
+      }
+    }
+    
     // Do the Calendly scheduling
-    if (startTime && endTime) {
+    if (validatedStartTime && validatedEndTime) {
       // Step 1: Attempt to lock the slot
       const userIdToUse = userId || (callRecord ? callRecord.userId : `user_${Date.now()}`);
-      const locked = lockSlot(startTime, userIdToUse);
+      const locked = lockSlot(validatedStartTime, userIdToUse);
       if (!locked) {
         return res.status(409).json({ 
           success: false, 
@@ -349,7 +507,7 @@ app.post('/schedule-calendly', async (req, res) => {
       }
 
       // Step 2: Confirm the lock
-      if (!confirmSlot(startTime, userIdToUse)) {
+      if (!confirmSlot(validatedStartTime, userIdToUse)) {
         return res.status(409).json({ 
           success: false, 
           error: "Slot is no longer available." 
@@ -358,7 +516,7 @@ app.post('/schedule-calendly', async (req, res) => {
 
       // Step 3: Check Calendly to make sure it hasn't been taken externally
       try {
-        const available = await isSlotAvailable(startTime, endTime);
+        const available = await isSlotAvailable(validatedStartTime, validatedEndTime);
         if (!available) {
           console.log("❌ That time slot is already booked.");
           return res.status(409).json({
@@ -391,8 +549,8 @@ app.post('/schedule-calendly', async (req, res) => {
             email,
             phone_number: phone
           },
-          start_time: startTime,
-          end_time: endTime,
+          start_time: validatedStartTime,
+          end_time: validatedEndTime,
           timezone: "America/Los_Angeles"
         }, {
           headers: {
@@ -407,32 +565,40 @@ app.post('/schedule-calendly', async (req, res) => {
         if (callRecord) {
           callRecord.schedulingComplete = true;
           callRecord.state = 'scheduled';
-          callRecord.appointmentTime = startTime;
+          callRecord.appointmentTime = validatedStartTime;
           activeCalls.set(call_id, callRecord);
         }
+
+        // Use formatted date/time if available, otherwise calculate from the timestamp
+        const appointmentDate = formattedDate || new Date(validatedStartTime).toLocaleDateString();
+        const appointmentTime = formattedTime || new Date(validatedStartTime).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
 
         // Send notification to make.com with appointment details
         const webhookData = {
           name,
           email,
           phone,
-          appointmentDate: new Date(startTime).toLocaleDateString(),
-          appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-          }),
+          appointmentDate,
+          appointmentTime,
           calendlyLink: calendlyResponse.data.uri,
           call_id,
-          schedulingComplete: true
+          schedulingComplete: true,
+          scheduleDay,
+          scheduleTime
         };
         
+        console.log('📤 Sending webhook notification with appointment details:', webhookData);
         await notifyMakeWebhook(webhookData);
 
         res.status(200).json({
           success: true,
           message: 'Call scheduled successfully.',
-          calendly_response: calendlyResponse.data
+          calendly_response: calendlyResponse.data,
+          webhookNotified: true
         });
       } catch (error) {
         const err = error.response?.data || error.message;
@@ -628,129 +794,234 @@ app.post('/update-conversation', express.json(), async (req, res) => {
   }
 });
 
-// Endpoint where AI sends final picked slot for scheduling
+// Enhanced endpoint where AI sends final picked slot for scheduling
 app.post('/schedule-appointment', async (req, res) => {
-  const { name, email, phone, eventTypeUri, startTime, endTime, userId, call_id } = req.body;
+  try {
+    const { 
+      name, 
+      email, 
+      phone, 
+      eventTypeUri, 
+      startTime, 
+      endTime, 
+      userId, 
+      call_id,
+      scheduleDay,
+      scheduleTime
+    } = req.body;
 
-  console.log('Received scheduling request:', { name, email, phone, startTime, endTime, userId, call_id });
+    console.log('Received scheduling request:', { 
+      name, email, phone, startTime, endTime, scheduleDay, scheduleTime, userId, call_id 
+    });
 
-  if (!phone) {
-    return res.status(400).json({ success: false, error: "Missing phone number field." });
-  }
-
-  // Check if this is associated with an active call
-  if (call_id) {
-    const callRecord = activeCalls.get(call_id);
-    if (callRecord && !callRecord.discoveryComplete) {
-      console.log(`⚠️ Warning: Attempted to schedule for call ${call_id} before discovery is complete`);
-      // You might want to prevent scheduling here, but we'll allow it to proceed anyway
-    }
-  }
-
-  // Try to book a Calendly event
-  if (startTime && endTime && userId) {
-    // Step 1: Attempt to lock the slot
-    const locked = lockSlot(startTime, userId);
-    if (!locked) {
-      return res.status(409).json({ success: false, error: "Slot is already locked by another user." });
+    if (!phone) {
+      return res.status(400).json({ success: false, error: "Missing phone number field." });
     }
 
-    // Step 2: Confirm the lock
-    if (!confirmSlot(startTime, userId)) {
-      return res.status(409).json({ success: false, error: "Slot is no longer available." });
-    }
-
-    // Step 3: Check Calendly to make sure it hasn't been taken externally
-    try {
-      const available = await isSlotAvailable(startTime, endTime);
-      if (!available) {
-        console.log("❌ That time slot is already booked.");
-        return res.status(409).json({
+    // Validate and parse date/time if provided as separate values
+    let validatedStartTime = startTime;
+    let validatedEndTime = endTime;
+    let formattedDate = null;
+    let formattedTime = null;
+    
+    if (scheduleDay && scheduleTime && !startTime) {
+      // Parse natural language date and time 
+      try {
+        const parsedDateTime = parseDateTime(scheduleDay, scheduleTime);
+        validatedStartTime = parsedDateTime.startTime;
+        validatedEndTime = parsedDateTime.endTime;
+        formattedDate = parsedDateTime.formattedDate;
+        formattedTime = parsedDateTime.formattedTime;
+        
+        console.log('✅ Parsed date/time successfully:', {
+          scheduleDay,
+          scheduleTime,
+          parsedStartTime: validatedStartTime,
+          parsedEndTime: validatedEndTime,
+          formattedDate,
+          formattedTime
+        });
+      } catch (parseError) {
+        console.error('❌ Error parsing date/time:', parseError.message);
+        return res.status(400).json({
           success: false,
-          error: "That time slot is already booked. Please choose another."
+          error: `Unable to parse the requested date and time. Please provide a clear date and time.`
         });
       }
-    } catch (checkErr) {
-      console.error("Error while checking slot availability:", checkErr);
-      return res.status(500).json({
-        success: false,
-        error: "Error checking Calendly availability."
-      });
     }
 
-    // Step 4: Create the event
-    const eventType = eventTypeUri || process.env.CALENDLY_EVENT_TYPE_URI;
-    if (!eventType) {
-      return res.status(400).json({ success: false, error: "Missing event type URI." });
+    // Check if this is associated with an active call
+    if (call_id) {
+      const callRecord = activeCalls.get(call_id);
+      if (callRecord && !callRecord.discoveryComplete) {
+        console.log(`⚠️ Warning: Attempted to schedule for call ${call_id} before discovery is complete`);
+        // You might want to prevent scheduling here, but we'll allow it to proceed anyway
+      }
     }
 
-    try {
-      const calendlyResponse = await axios.post('https://api.calendly.com/scheduled_events', {
-        event_type: eventType,
-        invitee: {
-          name: name || "Guest",
-          email,
-          phone_number: phone
-        },
-        start_time: startTime,
-        end_time: endTime,
-        timezone: "America/Los_Angeles"
-      }, {
-        headers: {
-          Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      console.log('✅ Meeting booked on Calendly:', calendlyResponse.data);
-
-      // Update call record if this is associated with a call
-      if (call_id && activeCalls.has(call_id)) {
-        const callRecord = activeCalls.get(call_id);
-        callRecord.schedulingComplete = true;
-        callRecord.appointmentTime = startTime;
-        activeCalls.set(call_id, callRecord);
+    // Try to book a Calendly event
+    if (validatedStartTime && validatedEndTime) {
+      // Step 1: Attempt to lock the slot
+      const userIdToUse = userId || `user_${Date.now()}`;
+      const locked = lockSlot(validatedStartTime, userIdToUse);
+      if (!locked) {
+        return res.status(409).json({ success: false, error: "Slot is already locked by another user." });
       }
 
-      // Prepare webhook data
-      const webhookData = {
-        name,
-        email,
-        phone,
-        appointmentDate: new Date(startTime).toLocaleDateString(),
-        appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
+      // Step 2: Confirm the lock
+      if (!confirmSlot(validatedStartTime, userIdToUse)) {
+        return res.status(409).json({ success: false, error: "Slot is no longer available." });
+      }
+
+      // Step 3: Check Calendly to make sure it hasn't been taken externally
+      try {
+        const available = await isSlotAvailable(validatedStartTime, validatedEndTime);
+        if (!available) {
+          console.log("❌ That time slot is already booked.");
+          return res.status(409).json({
+            success: false,
+            error: "That time slot is already booked. Please choose another."
+          });
+        }
+      } catch (checkErr) {
+        console.error("Error while checking slot availability:", checkErr);
+        return res.status(500).json({
+          success: false,
+          error: "Error checking Calendly availability."
+        });
+      }
+
+      // Step 4: Create the event
+      const eventType = eventTypeUri || process.env.CALENDLY_EVENT_TYPE_URI;
+      if (!eventType) {
+        return res.status(400).json({ success: false, error: "Missing event type URI." });
+      }
+
+      try {
+        const calendlyResponse = await axios.post('https://api.calendly.com/scheduled_events', {
+          event_type: eventType,
+          invitee: {
+            name: name || "Guest",
+            email,
+            phone_number: phone
+          },
+          start_time: validatedStartTime,
+          end_time: validatedEndTime,
+          timezone: "America/Los_Angeles"
+        }, {
+          headers: {
+            Authorization: `Bearer ${process.env.CALENDLY_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        console.log('✅ Meeting booked on Calendly:', calendlyResponse.data);
+
+        // Update call record if this is associated with a call
+        if (call_id && activeCalls.has(call_id)) {
+          const callRecord = activeCalls.get(call_id);
+          callRecord.schedulingComplete = true;
+          callRecord.appointmentTime = validatedStartTime;
+          activeCalls.set(call_id, callRecord);
+        }
+
+        // Use formatted date/time if available, otherwise calculate from the timestamp
+        const appointmentDate = formattedDate || new Date(validatedStartTime).toLocaleDateString();
+        const appointmentTime = formattedTime || new Date(validatedStartTime).toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
           hour12: true
-        }),
-        calendlyLink: calendlyResponse.data.uri,
-        call_id,
-        schedulingComplete: true
-      };
-      
-      await notifyMakeWebhook(webhookData);
+        });
 
-      res.status(200).json({
-        success: true,
-        message: 'Call scheduled successfully.',
-        calendly_response: calendlyResponse.data
-      });
-      return;
-    } catch (error) {
-      const err = error.response?.data || error.message;
-      console.error('❌ Error booking meeting:', err);
+        // Prepare webhook data
+        const webhookData = {
+          name,
+          email,
+          phone,
+          appointmentDate,
+          appointmentTime,
+          calendlyLink: calendlyResponse.data.uri,
+          call_id,
+          schedulingComplete: true,
+          scheduleDay,
+          scheduleTime,
+          originalRequest: {
+            startTime: startTime,
+            endTime: endTime,
+            scheduleDay,
+            scheduleTime
+          }
+        };
+        
+        // Log and send webhook data
+        console.log('📤 Sending Make.com webhook for successful scheduling:', webhookData);
+        const webhookSent = await notifyMakeWebhook(webhookData);
 
-      res.status(500).json({
+        res.status(200).json({
+          success: true,
+          message: 'Appointment scheduled successfully.',
+          calendly_response: calendlyResponse.data,
+          webhookSent,
+          appointmentDate,
+          appointmentTime
+        });
+        return;
+      } catch (error) {
+        const err = error.response?.data || error.message;
+        console.error('❌ Error booking meeting:', err);
+
+        res.status(500).json({
+          success: false,
+          message: 'Failed to schedule meeting.',
+          error: err
+        });
+        return;
+      }
+    } else {
+      return res.status(400).json({
         success: false,
-        message: 'Failed to schedule meeting.',
-        error: err
+        error: "Missing required scheduling information. Please provide either startTime and endTime or scheduleDay and scheduleTime."
       });
-      return;
     }
-  } else {
-    return res.status(400).json({
+  } catch (error) {
+    console.error('❌ Error in schedule-appointment endpoint:', error);
+    res.status(500).json({
       success: false,
-      error: "Missing required scheduling information."
+      error: "Internal server error: " + error.message
+    });
+  }
+});
+
+// Manual webhook trigger for testing
+app.post('/manual-webhook', async (req, res) => {
+  try {
+    const webhookData = req.body;
+    
+    if (!webhookData || Object.keys(webhookData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing webhook data"
+      });
+    }
+    
+    // Add required fields if missing
+    if (!webhookData.schedulingComplete) {
+      webhookData.schedulingComplete = true;
+    }
+    
+    console.log('📤 Manually triggering webhook with data:', webhookData);
+    const success = await notifyMakeWebhook(webhookData);
+    
+    res.status(200).json({
+      success,
+      message: success ? "Webhook sent successfully" : "Failed to send webhook",
+      data: webhookData
+    });
+  } catch (error) {
+    console.error('❌ Error in manual-webhook endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
