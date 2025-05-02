@@ -13,6 +13,9 @@ const {
 const app = express();
 app.use(express.json());
 
+// Set the default Make.com webhook URL
+const DEFAULT_MAKE_WEBHOOK_URL = 'https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei';
+
 // Initialize Retell SDK client
 let retellClient = null;
 try {
@@ -22,6 +25,20 @@ try {
   console.log('✅ Retell client initialized successfully');
 } catch (error) {
   console.error('❌ Error initializing Retell client:', error.message);
+}
+
+// Helper function to send data to Make.com webhook
+async function notifyMakeWebhook(data, customWebhookUrl = null) {
+  const webhookUrl = customWebhookUrl || DEFAULT_MAKE_WEBHOOK_URL;
+  
+  try {
+    await axios.post(webhookUrl, data);
+    console.log(`✅ Data sent to Make.com webhook: ${webhookUrl}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Error sending data to Make.com webhook: ${error.message}`);
+    return false;
+  }
 }
 
 // Request logging middleware
@@ -161,6 +178,9 @@ app.post('/trigger-retell-call', async (req, res) => {
     
     console.log('Triggering Retell call with:', { name, email, phone });
     
+    // Use the provided webhook URL or fall back to the default
+    const webhookUrl = make_webhook_url || DEFAULT_MAKE_WEBHOOK_URL;
+    
     // First try using the SDK
     if (retellClient) {
       try {
@@ -174,7 +194,7 @@ app.post('/trigger-retell-call', async (req, res) => {
             user_id: userId || `user_${Date.now()}`,
             needs_scheduling: true,
             call_source: "website_form",
-            make_webhook_url: make_webhook_url || ""
+            make_webhook_url: webhookUrl
           }
         });
         
@@ -186,7 +206,7 @@ app.post('/trigger-retell-call', async (req, res) => {
           name,
           email,
           userId: userId || `user_${Date.now()}`,
-          make_webhook_url: make_webhook_url || "",
+          make_webhook_url: webhookUrl,
           startTime: Date.now(),
           state: 'initiated',
           discoveryComplete: false,
@@ -217,7 +237,7 @@ app.post('/trigger-retell-call', async (req, res) => {
           user_id: userId || `user_${Date.now()}`,
           needs_scheduling: true,
           call_source: "website_form",
-          make_webhook_url: make_webhook_url || ""
+          make_webhook_url: webhookUrl
         }
       }, {
         headers: {
@@ -234,7 +254,7 @@ app.post('/trigger-retell-call', async (req, res) => {
         name,
         email,
         userId: userId || `user_${Date.now()}`,
-        make_webhook_url: make_webhook_url || "",
+        make_webhook_url: webhookUrl,
         startTime: Date.now(),
         state: 'initiated',
         discoveryComplete: false,
@@ -362,48 +382,24 @@ app.post('/schedule-calendly', async (req, res) => {
           callRecord.appointmentTime = startTime;
           activeCalls.set(call_id, callRecord);
           
-          // Send notification to make.com if webhook URL was provided
-          if (callRecord.make_webhook_url) {
-            try {
-              await axios.post(callRecord.make_webhook_url, {
-                name,
-                email,
-                phone,
-                appointmentDate: new Date(startTime).toLocaleDateString(),
-                appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                  hour12: true
-                }),
-                calendlyLink: calendlyResponse.data.uri,
-                call_id,
-                schedulingComplete: true
-              });
-              console.log('✅ Booking information sent to make.com webhook:', callRecord.make_webhook_url);
-            } catch (makeError) {
-              console.error('❌ Error sending to make.com webhook:', makeError.message);
-            }
-          } else {
-            // Default webhook if no custom one provided
-            try {
-              await axios.post('https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei', {
-                name,
-                email,
-                phone,
-                appointmentDate: new Date(startTime).toLocaleDateString(),
-                appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                  hour12: true
-                }),
-                calendlyLink: calendlyResponse.data.uri,
-                call_id
-              });
-              console.log('✅ Booking information sent to default make.com webhook');
-            } catch (makeError) {
-              console.error('❌ Error sending to default make.com webhook:', makeError.message);
-            }
-          }
+          // Prepare the webhook data
+          const webhookData = {
+            name,
+            email,
+            phone,
+            appointmentDate: new Date(startTime).toLocaleDateString(),
+            appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            }),
+            calendlyLink: calendlyResponse.data.uri,
+            call_id,
+            schedulingComplete: true
+          };
+          
+          // Send notification to make.com using our helper function
+          await notifyMakeWebhook(webhookData, callRecord.make_webhook_url);
         }
 
         res.status(200).json({
@@ -459,22 +455,15 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
           case 'call_ended':
             callRecord.state = 'ended';
             
-            // If we have a make.com webhook URL, notify that call has ended
-            if (callRecord.make_webhook_url) {
-              try {
-                await axios.post(callRecord.make_webhook_url, {
-                  call_id: call.call_id,
-                  name: callRecord.name,
-                  email: callRecord.email,
-                  phone: callRecord.phone,
-                  call_status: 'ended',
-                  schedulingComplete: callRecord.schedulingComplete || false
-                });
-                console.log('✅ Call ended notification sent to make.com webhook');
-              } catch (makeError) {
-                console.error('❌ Error sending call ended notification to make.com:', makeError.message);
-              }
-            }
+            // Notify that call has ended
+            await notifyMakeWebhook({
+              call_id: call.call_id,
+              name: callRecord.name,
+              email: callRecord.email,
+              phone: callRecord.phone,
+              call_status: 'ended',
+              schedulingComplete: callRecord.schedulingComplete || false
+            }, callRecord.make_webhook_url);
             break;
             
           case 'call_analyzed':
@@ -502,44 +491,20 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
             }
             
             // Now that call is analyzed, check if scheduling was completed
-            // If not, we might want to send a follow-up email/SMS
             if (!callRecord.schedulingComplete && call.metadata?.needs_scheduling) {
               console.log(`Call ${call.call_id} ended without scheduling. Sending data to Make.com.`);
               
-              // Send notification to make.com webhook if URL was provided
-              if (callRecord.make_webhook_url) {
-                try {
-                  await axios.post(callRecord.make_webhook_url, {
-                    call_id: call.call_id,
-                    name: callRecord.name,
-                    email: callRecord.email,
-                    phone: callRecord.phone,
-                    call_status: 'analyzed',
-                    schedulingComplete: callRecord.schedulingComplete || false,
-                    schedulingData: schedulingData,
-                    needs_followup: true
-                  });
-                  console.log('✅ Call analysis with scheduling data sent to make.com webhook');
-                } catch (makeError) {
-                  console.error('❌ Error sending to make.com webhook:', makeError.message);
-                }
-              } else {
-                // Optional: Send follow-up notification to default webhook
-                try {
-                  await axios.post('https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei', {
-                    name: callRecord.name,
-                    email: callRecord.email,
-                    phone: callRecord.phone,
-                    call_id: call.call_id,
-                    needs_followup: true,
-                    schedulingData: schedulingData
-                  });
-                  
-                  console.log('✅ Follow-up notification sent to default webhook');
-                } catch (makeError) {
-                  console.error('❌ Error sending follow-up notification:', makeError.message);
-                }
-              }
+              // Send notification to make.com webhook
+              await notifyMakeWebhook({
+                call_id: call.call_id,
+                name: callRecord.name,
+                email: callRecord.email,
+                phone: callRecord.phone,
+                call_status: 'analyzed',
+                schedulingComplete: callRecord.schedulingComplete || false,
+                schedulingData: schedulingData,
+                needs_followup: true
+              }, callRecord.make_webhook_url);
             }
             
             // Clean up call record after some time
@@ -589,20 +554,15 @@ app.post('/update-conversation', express.json(), async (req, res) => {
       callRecord.discoveryComplete = discoveryComplete;
       console.log(`Updated discovery state for call ${call_id}: ${discoveryComplete}`);
       
-      // If discovery is complete and we have a make.com webhook URL, notify
-      if (discoveryComplete && callRecord.make_webhook_url) {
-        try {
-          await axios.post(callRecord.make_webhook_url, {
-            call_id,
-            name: callRecord.name,
-            email: callRecord.email,
-            phone: callRecord.phone,
-            discoveryComplete: true
-          });
-          console.log('✅ Discovery complete notification sent to make.com webhook');
-        } catch (makeError) {
-          console.error('❌ Error sending discovery notification to make.com:', makeError.message);
-        }
+      // If discovery is complete, notify webhook
+      if (discoveryComplete) {
+        await notifyMakeWebhook({
+          call_id,
+          name: callRecord.name,
+          email: callRecord.email,
+          phone: callRecord.phone,
+          discoveryComplete: true
+        }, callRecord.make_webhook_url);
       }
     }
     
@@ -617,21 +577,14 @@ app.post('/update-conversation', express.json(), async (req, res) => {
       callRecord.schedulingData = schedulingData;
       console.log(`Updated scheduling data for call ${call_id}: ${JSON.stringify(schedulingData)}`);
       
-      // If we have scheduling data and a make.com webhook URL, send the data to make.com
-      if (callRecord.make_webhook_url) {
-        try {
-          await axios.post(callRecord.make_webhook_url, {
-            call_id,
-            name: callRecord.name,
-            email: callRecord.email,
-            phone: callRecord.phone,
-            schedulingData
-          });
-          console.log('✅ Scheduling data sent to make.com webhook');
-        } catch (makeError) {
-          console.error('❌ Error sending scheduling data to make.com:', makeError.message);
-        }
-      }
+      // Send scheduling data to webhook
+      await notifyMakeWebhook({
+        call_id,
+        name: callRecord.name,
+        email: callRecord.email,
+        phone: callRecord.phone,
+        schedulingData
+      }, callRecord.make_webhook_url);
     }
     
     // Save the updated record
@@ -723,6 +676,22 @@ app.post('/schedule-appointment', async (req, res) => {
 
       console.log('✅ Meeting booked on Calendly:', calendlyResponse.data);
 
+      // Prepare webhook data
+      const webhookData = {
+        name,
+        email,
+        phone,
+        appointmentDate: new Date(startTime).toLocaleDateString(),
+        appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }),
+        calendlyLink: calendlyResponse.data.uri,
+        call_id,
+        schedulingComplete: true
+      };
+
       // Update call record if this is associated with a call
       if (call_id && activeCalls.has(call_id)) {
         const callRecord = activeCalls.get(call_id);
@@ -730,67 +699,11 @@ app.post('/schedule-appointment', async (req, res) => {
         callRecord.appointmentTime = startTime;
         activeCalls.set(call_id, callRecord);
         
-        // If we have a make.com webhook URL, send the scheduling confirmation
-        if (callRecord.make_webhook_url) {
-          try {
-            await axios.post(callRecord.make_webhook_url, {
-              call_id,
-              name,
-              email,
-              phone,
-              appointmentDate: new Date(startTime).toLocaleDateString(),
-              appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true
-              }),
-              calendlyLink: calendlyResponse.data.uri,
-              schedulingComplete: true
-            });
-            console.log('✅ Booking confirmation sent to make.com webhook');
-          } catch (makeError) {
-            console.error('❌ Error sending to make.com webhook:', makeError.message);
-          }
-        } else {
-          // Use default webhook
-          try {
-            await axios.post('https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei', {
-              name,
-              email,
-              phone,
-              appointmentDate: new Date(startTime).toLocaleDateString(),
-              appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true
-              }),
-              calendlyLink: calendlyResponse.data.uri,
-              call_id
-            });
-            console.log('✅ Booking information sent to default make.com webhook');
-          } catch (makeError) {
-            console.error('❌ Error sending to default make.com webhook:', makeError.message);
-          }
-        }
+        // Send to webhook using the helper function
+        await notifyMakeWebhook(webhookData, callRecord.make_webhook_url);
       } else {
         // No associated call - use default webhook
-        try {
-          await axios.post('https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei', {
-            name,
-            email,
-            phone,
-            appointmentDate: new Date(startTime).toLocaleDateString(),
-            appointmentTime: new Date(startTime).toLocaleTimeString('en-US', {
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true
-            }),
-            calendlyLink: calendlyResponse.data.uri
-          });
-          console.log('✅ Booking information sent to default make.com webhook');
-        } catch (makeError) {
-          console.error('❌ Error sending to default make.com webhook:', makeError.message);
-        }
+        await notifyMakeWebhook(webhookData);
       }
 
       res.status(200).json({
