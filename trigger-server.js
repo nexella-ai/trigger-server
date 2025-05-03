@@ -992,6 +992,36 @@ app.post('/schedule-appointment', async (req, res) => {
   }
 });
 
+// Simple endpoint to manually trigger appointment webhook
+app.get('/manual-webhook', async (req, res) => {
+  try {
+    const testData = {
+      name: req.query.name || "Test User",
+      email: req.query.email || "test@example.com",
+      phone: req.query.phone || "+12345678900",
+      schedulingComplete: true,
+      appointmentDate: "Monday, May 6, 2025",
+      appointmentTime: "11:00 AM",
+      calendlyLink: "https://calendly.com/test/meeting"
+    };
+    
+    console.log('Sending manual webhook data:', testData);
+    
+    const success = await notifyMakeWebhook(testData);
+    
+    res.status(200).json({
+      success,
+      message: success ? 'Webhook sent successfully' : 'Failed to send webhook',
+      data: testData
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Manual webhook trigger for testing
 app.post('/manual-webhook', async (req, res) => {
   try {
