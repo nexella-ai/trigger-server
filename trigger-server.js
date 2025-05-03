@@ -1004,7 +1004,7 @@ app.get('/manual-webhook', async (req, res) => {
       schedulingComplete: true,
       appointmentDate: "Monday, May 6, 2025",
       appointmentTime: "11:00 AM",
-      calendlyLink: "https://calendly.com/nexellaai/30min"
+      calendlyLink: "https://api.calendly.com/event_types/184985319"
     };
     
     console.log('Sending manual webhook data:', testData);
