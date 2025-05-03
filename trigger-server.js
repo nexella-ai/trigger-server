@@ -192,8 +192,8 @@ app.get('/test-webhook', async (req, res) => {
       phone: "+12345678900",
       call_id: "test123",
       schedulingComplete: true,
-      appointmentDate: "May 5, 2025",
-      appointmentTime: "10:00 AM",
+      preferredDay: "Monday",
+      preferredTime: "10:00 AM",
       schedulingLink: "https://calendly.com/nexella/30min" // Changed from calendlyLink to schedulingLink
     };
     
@@ -209,16 +209,6 @@ app.get('/test-webhook', async (req, res) => {
   } catch (error) {
     console.error('Error in test-webhook endpoint:', error);
     res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message
-    });
-  }
-});
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Trigger server running on port ${PORT}`);
-});json({
       success: false,
       error: error.message
     });
@@ -447,7 +437,7 @@ app.post('/trigger-retell-call', async (req, res) => {
   }
 });
 
-// UPDATED: Modified endpoint for sending scheduling link instead of direct booking
+// NEW: Modified endpoint for sending scheduling link instead of direct booking
 app.post('/send-scheduling-link', async (req, res) => {
   try {
     const { 
@@ -516,6 +506,79 @@ app.post('/send-scheduling-link', async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Internal server error"
+    });
+  }
+});
+
+// NEW: Endpoint for handling preferred scheduling times and sending links
+app.post('/process-scheduling-preference', async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      phone, 
+      preferredDay,
+      preferredTime,
+      userId, 
+      call_id
+    } = req.body;
+
+    console.log('Received scheduling preference:', { 
+      name, email, phone, preferredDay, preferredTime, userId, call_id 
+    });
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing email address" 
+      });
+    }
+
+    // Get the Calendly scheduling link
+    const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
+    
+    // Update call record if this is associated with a call
+    if (call_id && activeCalls.has(call_id)) {
+      const callRecord = activeCalls.get(call_id);
+      callRecord.schedulingComplete = true;
+      callRecord.preferredDay = preferredDay;
+      callRecord.preferredTime = preferredTime;
+      activeCalls.set(call_id, callRecord);
+    }
+
+    // Format date/time strings for display
+    const formattedDay = preferredDay || 'preferred day';
+    const formattedTime = preferredTime || 'preferred time';
+
+    // Prepare webhook data
+    const webhookData = {
+      name,
+      email,
+      phone,
+      preferredDay: formattedDay,
+      preferredTime: formattedTime,
+      schedulingLink,
+      call_id,
+      schedulingComplete: true
+    };
+    
+    // Log and send webhook data
+    console.log('📤 Sending Make.com webhook for scheduling preference:', webhookData);
+    const webhookSent = await notifyMakeWebhook(webhookData);
+
+    res.status(200).json({
+      success: true,
+      message: 'Scheduling preferences processed and link will be sent',
+      schedulingLink,
+      webhookSent,
+      preferredDay: formattedDay,
+      preferredTime: formattedTime
+    });
+  } catch (error) {
+    console.error('❌ Error in process-scheduling-preference endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: "Internal server error: " + error.message
     });
   }
 });
@@ -689,79 +752,6 @@ app.post('/update-conversation', express.json(), async (req, res) => {
   }
 });
 
-// UPDATED: New endpoint for handling preferred scheduling times and sending links
-app.post('/process-scheduling-preference', async (req, res) => {
-  try {
-    const { 
-      name, 
-      email, 
-      phone, 
-      preferredDay,
-      preferredTime,
-      userId, 
-      call_id
-    } = req.body;
-
-    console.log('Received scheduling preference:', { 
-      name, email, phone, preferredDay, preferredTime, userId, call_id 
-    });
-
-    if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "Missing email address" 
-      });
-    }
-
-    // Get the Calendly scheduling link
-    const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
-    
-    // Update call record if this is associated with a call
-    if (call_id && activeCalls.has(call_id)) {
-      const callRecord = activeCalls.get(call_id);
-      callRecord.schedulingComplete = true;
-      callRecord.preferredDay = preferredDay;
-      callRecord.preferredTime = preferredTime;
-      activeCalls.set(call_id, callRecord);
-    }
-
-    // Format date/time strings for display
-    const formattedDay = preferredDay || 'preferred day';
-    const formattedTime = preferredTime || 'preferred time';
-
-    // Prepare webhook data
-    const webhookData = {
-      name,
-      email,
-      phone,
-      preferredDay: formattedDay,
-      preferredTime: formattedTime,
-      schedulingLink,
-      call_id,
-      schedulingComplete: true
-    };
-    
-    // Log and send webhook data
-    console.log('📤 Sending Make.com webhook for scheduling preference:', webhookData);
-    const webhookSent = await notifyMakeWebhook(webhookData);
-
-    res.status(200).json({
-      success: true,
-      message: 'Scheduling preferences processed and link will be sent',
-      schedulingLink,
-      webhookSent,
-      preferredDay: formattedDay,
-      preferredTime: formattedTime
-    });
-  } catch (error) {
-    console.error('❌ Error in process-scheduling-preference endpoint:', error);
-    res.status(500).json({
-      success: false,
-      error: "Internal server error: " + error.message
-    });
-  }
-});
-
 // Simple endpoint to manually trigger a scheduling email
 app.get('/manual-webhook', async (req, res) => {
   try {
@@ -870,4 +860,14 @@ app.get('/test-retell-api', async (req, res) => {
   } catch (error) {
     console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
     
-    res.status(500).
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🚀 Trigger server running on port ${PORT}`);
+});
