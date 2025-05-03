@@ -197,6 +197,8 @@ app.get('/test-webhook', async (req, res) => {
       calendlyLink: "https://api.calendly.com/event_types/184985319"
     };
     
+    console.log('Sending valid Calendly webhook data:', testData);
+    
     const success = await notifyMakeWebhook(testData);
     
     res.status(200).json({
