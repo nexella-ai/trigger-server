@@ -13,8 +13,8 @@ const {
 const app = express();
 app.use(express.json());
 
-// Set the default Make.com webhook URL
-const DEFAULT_MAKE_WEBHOOK_URL = 'https://hook.us2.make.com/6wsdtorhmrpxbical1czq09pmurffoei';
+// Set the default n8n webhook URL - UPDATED FOR N8N
+const DEFAULT_N8N_WEBHOOK_URL = 'https://n8n-clp2.onrender.com/webhook/nexella-lead-capture';
 
 // Helper function to parse a date and time string
 function parseDateTime(dateStr, timeStr) {
@@ -103,9 +103,9 @@ function parseDateTime(dateStr, timeStr) {
   }
 }
 
-// Enhanced helper function to send data to Make.com webhook
-async function notifyMakeWebhook(data) {
-  console.log('🚀 PREPARING TO SEND DATA TO MAKE.COM WEBHOOK:', JSON.stringify(data, null, 2));
+// Enhanced helper function to send data to n8n webhook - UPDATED FOR N8N
+async function notifyN8nWebhook(data) {
+  console.log('🚀 PREPARING TO SEND DATA TO N8N WEBHOOK:', JSON.stringify(data, null, 2));
   
   try {
     // Add timestamp to webhook data
@@ -115,9 +115,9 @@ async function notifyMakeWebhook(data) {
       webhook_version: '1.1'
     };
     
-    console.log('📤 SENDING DATA TO MAKE.COM WEBHOOK:', JSON.stringify(webhookData, null, 2));
+    console.log('📤 SENDING DATA TO N8N WEBHOOK:', JSON.stringify(webhookData, null, 2));
     
-    const response = await axios.post(DEFAULT_MAKE_WEBHOOK_URL, webhookData, {
+    const response = await axios.post(DEFAULT_N8N_WEBHOOK_URL, webhookData, {
       timeout: 10000, // 10 second timeout
       headers: {
         'Content-Type': 'application/json',
@@ -125,11 +125,11 @@ async function notifyMakeWebhook(data) {
       }
     });
     
-    console.log(`✅ DATA SENT TO MAKE.COM WEBHOOK. Response status: ${response.status}`);
+    console.log(`✅ DATA SENT TO N8N WEBHOOK. Response status: ${response.status}`);
     console.log(`✅ RESPONSE DETAILS:`, JSON.stringify(response.data || {}, null, 2));
     return true;
   } catch (error) {
-    console.error(`❌ ERROR SENDING DATA TO MAKE.COM WEBHOOK: ${error.message}`);
+    console.error(`❌ ERROR SENDING DATA TO N8N WEBHOOK: ${error.message}`);
     if (error.response) {
       console.error('❌ RESPONSE ERROR DETAILS:', {
         status: error.response.status,
@@ -146,7 +146,7 @@ async function notifyMakeWebhook(data) {
     console.log('🔄 Attempting to retry webhook notification in 3 seconds...');
     setTimeout(async () => {
       try {
-        const retryResponse = await axios.post(DEFAULT_MAKE_WEBHOOK_URL, data);
+        const retryResponse = await axios.post(DEFAULT_N8N_WEBHOOK_URL, data);
         console.log(`✅ RETRY SUCCESSFUL. Response status: ${retryResponse.status}`);
       } catch (retryError) {
         console.error(`❌ RETRY FAILED: ${retryError.message}`);
@@ -183,7 +183,7 @@ app.get('/health', (req, res) => {
   res.status(200).send('Trigger server is healthy.');
 });
 
-// Test endpoint to directly send a webhook to Make.com
+// Test endpoint to directly send a webhook to n8n
 app.get('/test-webhook', async (req, res) => {
   try {
     const testData = {
@@ -194,12 +194,12 @@ app.get('/test-webhook', async (req, res) => {
       schedulingComplete: true,
       preferredDay: "Monday",
       preferredTime: "10:00 AM",
-      schedulingLink: "https://calendly.com/nexella/30min" // Changed from calendlyLink to schedulingLink
+      schedulingLink: "https://calendly.com/nexella/30min"
     };
     
-    console.log('Sending valid Calendly webhook data:', testData);
+    console.log('Sending valid webhook test data:', testData);
     
-    const success = await notifyMakeWebhook(testData);
+    const success = await notifyN8nWebhook(testData);
     
     res.status(200).json({
       success,
@@ -350,7 +350,8 @@ app.post('/trigger-retell-call', async (req, res) => {
             user_id: userId || `user_${Date.now()}`,
             needs_scheduling: true,
             call_source: "website_form",
-            make_webhook_url: DEFAULT_MAKE_WEBHOOK_URL
+            // Updated for n8n
+            n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
           }
         });
         
@@ -392,7 +393,8 @@ app.post('/trigger-retell-call', async (req, res) => {
           user_id: userId || `user_${Date.now()}`,
           needs_scheduling: true,
           call_source: "website_form",
-          make_webhook_url: DEFAULT_MAKE_WEBHOOK_URL
+          // Updated for n8n
+          n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
         }
       }, {
         headers: {
@@ -437,7 +439,7 @@ app.post('/trigger-retell-call', async (req, res) => {
   }
 });
 
-// NEW: Modified endpoint for sending scheduling link instead of direct booking
+// NEW: Modified endpoint for sending scheduling link using n8n
 app.post('/send-scheduling-link', async (req, res) => {
   try {
     const { 
@@ -487,13 +489,14 @@ app.post('/send-scheduling-link', async (req, res) => {
       phone,
       preferredDay: formattedDate,
       preferredTime: formattedTime,
-      schedulingLink, // This is the key change - sending a link instead of booking directly
+      schedulingLink, // This is the key field - sending a link instead of booking directly
       call_id,
       schedulingComplete: true
     };
     
     console.log('📤 Sending webhook notification with scheduling link details:', webhookData);
-    const webhookSent = await notifyMakeWebhook(webhookData);
+    // Updated to use the n8n webhook function
+    const webhookSent = await notifyN8nWebhook(webhookData);
     
     res.status(200).json({
       success: true,
@@ -510,7 +513,7 @@ app.post('/send-scheduling-link', async (req, res) => {
   }
 });
 
-// NEW: Endpoint for handling preferred scheduling times and sending links
+// Modified: Endpoint for handling preferred scheduling times and sending links
 app.post('/process-scheduling-preference', async (req, res) => {
   try {
     const { 
@@ -563,8 +566,9 @@ app.post('/process-scheduling-preference', async (req, res) => {
     };
     
     // Log and send webhook data
-    console.log('📤 Sending Make.com webhook for scheduling preference:', webhookData);
-    const webhookSent = await notifyMakeWebhook(webhookData);
+    console.log('📤 Sending n8n webhook for scheduling preference:', webhookData);
+    // Updated to use the n8n webhook function
+    const webhookSent = await notifyN8nWebhook(webhookData);
 
     res.status(200).json({
       success: true,
@@ -608,7 +612,7 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
             callRecord.state = 'ended';
             
             // Notify that call has ended
-            await notifyMakeWebhook({
+            await notifyN8nWebhook({
               name: callRecord.name,
               email: callRecord.email,
               phone: callRecord.phone,
@@ -644,10 +648,10 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
             
             // Now that call is analyzed, check if scheduling was completed
             if (!callRecord.schedulingComplete && call.metadata?.needs_scheduling) {
-              console.log(`Call ${call.call_id} ended without scheduling link being sent. Sending data to Make.com.`);
+              console.log(`Call ${call.call_id} ended without scheduling link being sent. Sending data to n8n.`);
               
-              // Send notification to make.com webhook with scheduling data
-              await notifyMakeWebhook({
+              // Send notification to n8n webhook with scheduling data
+              await notifyN8nWebhook({
                 name: callRecord.name,
                 email: callRecord.email,
                 phone: callRecord.phone,
@@ -708,7 +712,7 @@ app.post('/update-conversation', express.json(), async (req, res) => {
       
       // If discovery is complete, notify webhook
       if (discoveryComplete) {
-        await notifyMakeWebhook({
+        await notifyN8nWebhook({
           name: callRecord.name,
           email: callRecord.email,
           phone: callRecord.phone,
@@ -730,7 +734,7 @@ app.post('/update-conversation', express.json(), async (req, res) => {
       console.log(`Updated scheduling data for call ${call_id}: ${JSON.stringify(schedulingData)}`);
       
       // Send scheduling data to webhook
-      await notifyMakeWebhook({
+      await notifyN8nWebhook({
         name: callRecord.name,
         email: callRecord.email,
         phone: callRecord.phone,
@@ -767,7 +771,7 @@ app.get('/manual-webhook', async (req, res) => {
     
     console.log('Sending manual webhook data:', testData);
     
-    const success = await notifyMakeWebhook(testData);
+    const success = await notifyN8nWebhook(testData);
     
     res.status(200).json({
       success,
@@ -800,7 +804,7 @@ app.post('/manual-webhook', async (req, res) => {
     }
     
     console.log('📤 Manually triggering webhook with data:', webhookData);
-    const success = await notifyMakeWebhook(webhookData);
+    const success = await notifyN8nWebhook(webhookData);
     
     res.status(200).json({
       success,
