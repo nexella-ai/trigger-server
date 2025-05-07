@@ -14,7 +14,7 @@ const app = express();
 app.use(express.json());
 
 // Set the default n8n webhook URL - UPDATED FOR N8N
-const DEFAULT_N8N_WEBHOOK_URL = 'https://n8n-clp2.onrender.com/webhook/nexella-lead-capture';
+const DEFAULT_N8N_WEBHOOK_URL = 'https://n8n-clp2.onrender.com/webhook/retell-scheduling';
 
 // Helper function to parse a date and time string
 function parseDateTime(dateStr, timeStr) {
