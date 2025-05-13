@@ -16,8 +16,8 @@ app.use(express.json());
 // Set the default n8n webhook URL - UPDATED FOR N8N
 const DEFAULT_N8N_WEBHOOK_URL = 'https://n8n-clp2.onrender.com/webhook/retell-scheduling';
 
-// Helper function to parse a date and time string
-function parseDateTime(dateStr, timeStr) {
+// Helper function to parse a date string
+function parseDate(dateStr) {
   try {
     // Handle common day formats
     const days = {
@@ -53,53 +53,13 @@ function parseDateTime(dateStr, timeStr) {
     targetDate.setDate(now.getDate() + daysToAdd);
     targetDate.setHours(0, 0, 0, 0);
     
-    // Parse time
-    // Example formats: "11am", "11:00 AM", "2pm", "14:00"
-    let hours = 0;
-    let minutes = 0;
-    
-    // Remove all spaces from time string
-    const cleanTime = timeStr.toLowerCase().replace(/\s+/g, '');
-    
-    if (cleanTime.includes(':')) {
-      // Format like "11:00am"
-      const timeParts = cleanTime.split(':');
-      hours = parseInt(timeParts[0], 10);
-      
-      if (timeParts[1].includes('pm') && hours < 12) {
-        hours += 12;
-      } else if (timeParts[1].includes('am') && hours === 12) {
-        hours = 0;
-      }
-      
-      minutes = parseInt(timeParts[1].replace(/[^\d]/g, ''), 10);
-    } else {
-      // Format like "11am"
-      hours = parseInt(cleanTime.replace(/[^\d]/g, ''), 10);
-      if (cleanTime.includes('pm') && hours < 12) {
-        hours += 12;
-      } else if (cleanTime.includes('am') && hours === 12) {
-        hours = 0;
-      }
-      minutes = 0;
-    }
-    
-    // Set time on target date
-    targetDate.setHours(hours, minutes, 0, 0);
-    
-    // Create end time (1 hour later)
-    const endDate = new Date(targetDate);
-    endDate.setHours(endDate.getHours() + 1);
-    
     return {
-      startTime: targetDate.toISOString(),
-      endTime: endDate.toISOString(),
-      formattedDate: targetDate.toLocaleDateString(),
-      formattedTime: targetDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      date: targetDate.toISOString(),
+      formattedDate: targetDate.toLocaleDateString()
     };
   } catch (error) {
-    console.error('Error parsing date/time:', error);
-    throw new Error(`Failed to parse date "${dateStr}" and time "${timeStr}": ${error.message}`);
+    console.error('Error parsing date:', error);
+    throw new Error(`Failed to parse date "${dateStr}": ${error.message}`);
   }
 }
 
@@ -193,7 +153,6 @@ app.get('/test-webhook', async (req, res) => {
       call_id: "test123",
       schedulingComplete: true,
       preferredDay: "Monday",
-      preferredTime: "10:00 AM",
       schedulingLink: "https://calendly.com/nexella/30min"
     };
     
@@ -352,7 +311,10 @@ app.post('/trigger-retell-call', async (req, res) => {
             call_source: "website_form",
             // Updated for n8n
             n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
-          }
+          },
+          // New: Add a callback URL for the agent to trigger when scheduling is complete
+          webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
+          webhook_events: ["call_ended", "call_analyzed"]
         });
         
         // Store the call in our active calls map
@@ -395,7 +357,9 @@ app.post('/trigger-retell-call', async (req, res) => {
           call_source: "website_form",
           // Updated for n8n
           n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
-        }
+        },
+        webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
+        webhook_events: ["call_ended", "call_analyzed"]
       }, {
         headers: {
           Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
@@ -448,12 +412,11 @@ app.post('/send-scheduling-link', async (req, res) => {
       email, 
       phone, 
       preferredDay,
-      preferredTime,
       userId
     } = req.body;
     
     console.log('Received scheduling link request:', { 
-      call_id, name, email, phone, preferredDay, preferredTime
+      call_id, name, email, phone, preferredDay
     });
     
     if (!email) {
@@ -473,22 +436,16 @@ app.post('/send-scheduling-link', async (req, res) => {
         callRecord.schedulingComplete = true;
         callRecord.state = 'scheduling_link_sent';
         callRecord.preferredDay = preferredDay;
-        callRecord.preferredTime = preferredTime;
         activeCalls.set(call_id, callRecord);
       }
     }
-    
-    // Format date/time if provided
-    const formattedDate = preferredDay || '';
-    const formattedTime = preferredTime || '';
     
     // Prepare webhook data with scheduling link
     const webhookData = {
       name,
       email,
       phone,
-      preferredDay: formattedDate,
-      preferredTime: formattedTime,
+      preferredDay: preferredDay || '',
       schedulingLink, // This is the key field - sending a link instead of booking directly
       call_id,
       schedulingComplete: true
@@ -513,7 +470,7 @@ app.post('/send-scheduling-link', async (req, res) => {
   }
 });
 
-// Modified: Endpoint for handling preferred scheduling times and sending links
+// Modified: Endpoint for handling preferred scheduling and sending links
 app.post('/process-scheduling-preference', async (req, res) => {
   try {
     const { 
@@ -521,13 +478,12 @@ app.post('/process-scheduling-preference', async (req, res) => {
       email, 
       phone, 
       preferredDay,
-      preferredTime,
       userId, 
       call_id
     } = req.body;
 
     console.log('Received scheduling preference:', { 
-      name, email, phone, preferredDay, preferredTime, userId, call_id 
+      name, email, phone, preferredDay, userId, call_id 
     });
 
     if (!email) {
@@ -545,13 +501,11 @@ app.post('/process-scheduling-preference', async (req, res) => {
       const callRecord = activeCalls.get(call_id);
       callRecord.schedulingComplete = true;
       callRecord.preferredDay = preferredDay;
-      callRecord.preferredTime = preferredTime;
       activeCalls.set(call_id, callRecord);
     }
 
-    // Format date/time strings for display
+    // Format day string for display
     const formattedDay = preferredDay || 'preferred day';
-    const formattedTime = preferredTime || 'preferred time';
 
     // Prepare webhook data
     const webhookData = {
@@ -559,7 +513,6 @@ app.post('/process-scheduling-preference', async (req, res) => {
       email,
       phone,
       preferredDay: formattedDay,
-      preferredTime: formattedTime,
       schedulingLink,
       call_id,
       schedulingComplete: true
@@ -575,8 +528,7 @@ app.post('/process-scheduling-preference', async (req, res) => {
       message: 'Scheduling preferences processed and link will be sent',
       schedulingLink,
       webhookSent,
-      preferredDay: formattedDay,
-      preferredTime: formattedTime
+      preferredDay: formattedDay
     });
   } catch (error) {
     console.error('❌ Error in process-scheduling-preference endpoint:', error);
@@ -587,7 +539,7 @@ app.post('/process-scheduling-preference', async (req, res) => {
   }
 });
 
-// Enhanced webhook endpoint for receiving events from Retell
+// IMPROVED: Enhanced webhook endpoint for receiving events from Retell
 app.post('/retell-webhook', express.json(), async (req, res) => {
   try {
     const { event, call } = req.body;
@@ -599,81 +551,82 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
       console.log(`Call ID: ${call.call_id}, Status: ${call.call_status}`);
       
       // Update our internal call record
-      const callRecord = activeCalls.get(call.call_id);
+      const callRecord = activeCalls.get(call.call_id) || {};
       
-      if (callRecord) {
-        // Update call state based on event
-        switch (event) {
-          case 'call_started':
-            callRecord.state = 'in_progress';
-            break;
-            
-          case 'call_ended':
-            callRecord.state = 'ended';
-            
-            // Notify that call has ended
-            await notifyN8nWebhook({
-              name: callRecord.name,
-              email: callRecord.email,
-              phone: callRecord.phone,
-              call_id: call.call_id,
-              call_status: 'ended',
-              schedulingComplete: callRecord.schedulingComplete || false
-            });
-            break;
-            
-          case 'call_analyzed':
-            callRecord.state = 'analyzed';
-            
-            // Extract scheduling data from the call analysis if available
-            let schedulingData = null;
-            
-            if (call.analysis && call.analysis.custom_data) {
-              try {
-                // Try to parse any scheduling data that might be in the analysis
-                if (typeof call.analysis.custom_data === 'string') {
-                  const parsedData = JSON.parse(call.analysis.custom_data);
-                  if (parsedData.scheduling || parsedData.appointmentInfo) {
-                    schedulingData = parsedData.scheduling || parsedData.appointmentInfo;
-                    console.log('✅ Extracted scheduling data from call analysis:', schedulingData);
-                  }
-                } else if (call.analysis.custom_data.scheduling || call.analysis.custom_data.appointmentInfo) {
-                  schedulingData = call.analysis.custom_data.scheduling || call.analysis.custom_data.appointmentInfo;
-                  console.log('✅ Extracted scheduling data from call analysis:', schedulingData);
-                }
-              } catch (parseError) {
-                console.error('❌ Error parsing call analysis custom data:', parseError.message);
-              }
+      // Important: Extract email and other info from call metadata
+      const email = call.metadata?.customer_email || callRecord.email || '';
+      const name = call.metadata?.customer_name || callRecord.name || '';
+      const phone = call.to_number || callRecord.phone || '';
+      const userId = call.metadata?.user_id || callRecord.userId || '';
+      let preferredDay = '';
+      
+      // Extract scheduling data from the call
+      if (event === 'call_ended' || event === 'call_analyzed') {
+        // Try to extract scheduling info from call data
+        if (call.variables && call.variables.preferredDay) {
+          preferredDay = call.variables.preferredDay;
+          console.log(`Found preferredDay in call variables: ${preferredDay}`);
+        } else if (call.custom_data && call.custom_data.preferredDay) {
+          preferredDay = call.custom_data.preferredDay;
+          console.log(`Found preferredDay in custom_data: ${preferredDay}`);
+        } else if (call.analysis && call.analysis.custom_data) {
+          // Try to extract from analysis data
+          try {
+            let analysisData = call.analysis.custom_data;
+            if (typeof analysisData === 'string') {
+              analysisData = JSON.parse(analysisData);
             }
             
-            // Now that call is analyzed, check if scheduling was completed
-            if (!callRecord.schedulingComplete && call.metadata?.needs_scheduling) {
-              console.log(`Call ${call.call_id} ended without scheduling link being sent. Sending data to n8n.`);
-              
-              // Send notification to n8n webhook with scheduling data
-              await notifyN8nWebhook({
-                name: callRecord.name,
-                email: callRecord.email,
-                phone: callRecord.phone,
-                call_id: call.call_id,
-                call_status: 'analyzed',
-                schedulingComplete: callRecord.schedulingComplete || false,
-                schedulingData: schedulingData,
-                needs_followup: true
-              });
+            if (analysisData.preferredDay) {
+              preferredDay = analysisData.preferredDay;
+              console.log(`Found preferredDay in analysis data: ${preferredDay}`);
+            } else if (analysisData.scheduling && analysisData.scheduling.day) {
+              preferredDay = analysisData.scheduling.day;
+              console.log(`Found preferredDay in scheduling data: ${preferredDay}`);
             }
-            
-            // Clean up call record after some time
-            setTimeout(() => {
-              activeCalls.delete(call.call_id);
-              console.log(`Cleaned up call record for ${call.call_id}`);
-            }, 24 * 60 * 60 * 1000); // 24 hours
-            
-            break;
+          } catch (error) {
+            console.error('Error parsing analysis data:', error);
+          }
         }
         
-        // Update the record
-        activeCalls.set(call.call_id, callRecord);
+        // If we have an email and the call ended or was analyzed, always send webhook
+        if (email) {
+          console.log(`Sending webhook for call ${call.call_id} event ${event}`);
+          
+          // Prepare discovery data to include in webhook
+          const discoveryData = {
+            call_duration: call.call_duration_seconds || 0,
+            call_status: call.call_status || 'unknown',
+            custom_data: call.custom_data || {}
+          };
+          
+          // Get the Calendly scheduling link
+          const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
+          
+          // Send webhook to n8n
+          await notifyN8nWebhook({
+            name,
+            email,
+            phone,
+            call_id: call.call_id,
+            preferredDay: preferredDay || 'Not specified',
+            schedulingLink,
+            schedulingComplete: true,
+            call_status: call.call_status || 'unknown',
+            call_event: event,
+            discovery_data: discoveryData
+          });
+          
+          console.log(`✅ Webhook sent for call ${call.call_id} event ${event}`);
+        } else {
+          console.warn(`⚠️ No email found for call ${call.call_id}, cannot send webhook`);
+        }
+        
+        // Clean up call record after sending webhook
+        setTimeout(() => {
+          activeCalls.delete(call.call_id);
+          console.log(`Cleaned up call record for ${call.call_id}`);
+        }, 5 * 60 * 1000); // 5 minutes timeout
       }
     }
     
@@ -687,7 +640,7 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
 // Update conversation state from Retell agent
 app.post('/update-conversation', express.json(), async (req, res) => {
   try {
-    const { call_id, discoveryComplete, selectedSlot, schedulingData } = req.body;
+    const { call_id, discoveryComplete, preferredDay, schedulingData } = req.body;
     
     if (!call_id) {
       return res.status(400).json({
@@ -722,10 +675,25 @@ app.post('/update-conversation', express.json(), async (req, res) => {
       }
     }
     
-    // Update selected slot if provided
-    if (selectedSlot) {
-      callRecord.selectedSlot = selectedSlot;
-      console.log(`Updated selected slot for call ${call_id}: ${JSON.stringify(selectedSlot)}`);
+    // Update preferredDay if provided
+    if (preferredDay) {
+      callRecord.preferredDay = preferredDay;
+      console.log(`Updated preferredDay for call ${call_id}: ${preferredDay}`);
+      
+      // If we have a preferredDay, send scheduling data
+      const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
+      
+      await notifyN8nWebhook({
+        name: callRecord.name,
+        email: callRecord.email,
+        phone: callRecord.phone,
+        call_id,
+        preferredDay,
+        schedulingLink,
+        schedulingComplete: true
+      });
+      
+      console.log(`Sent scheduling webhook for call ${call_id}`);
     }
     
     // Update scheduling data if provided
@@ -760,12 +728,11 @@ app.post('/update-conversation', express.json(), async (req, res) => {
 app.get('/manual-webhook', async (req, res) => {
   try {
     const testData = {
-      name: req.query.name || "Test User",
-      email: req.query.email || "test@example.com",
-      phone: req.query.phone || "+12345678900",
+      name: req.query.name || "Jaden",
+      email: req.query.email || "jadenlugoco@gmail.com",
+      phone: req.query.phone || " 12099387088",
       schedulingComplete: true,
       preferredDay: req.query.day || "Monday",
-      preferredTime: req.query.time || "11:00 AM",
       schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min"
     };
     
