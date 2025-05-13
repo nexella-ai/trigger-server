@@ -68,6 +68,45 @@ async function notifyN8nWebhook(data) {
   console.log('🚀 PREPARING TO SEND DATA TO N8N WEBHOOK:', JSON.stringify(data, null, 2));
   
   try {
+    // Format discovery data if present
+    if (data.discovery_data) {
+      // Format the discovery data into a structured format for Airtable
+      const formattedDiscoveryData = {};
+      
+      // Map discovery questions to better field names
+      const questionMapping = {
+        'question_0': 'How did you hear about us',
+        'question_1': 'Business or industry',
+        'question_2': 'Main product',
+        'question_3': 'Running ads',
+        'question_4': 'Using CRM',
+        'question_5': 'Pain points'
+      };
+      
+      // Process discovery data into formatted fields
+      Object.entries(data.discovery_data).forEach(([key, value]) => {
+        if (questionMapping[key]) {
+          formattedDiscoveryData[questionMapping[key]] = value;
+        } else {
+          formattedDiscoveryData[key] = value;
+        }
+      });
+      
+      // Add formatted discovery data
+      data.formatted_discovery = formattedDiscoveryData;
+      
+      // Create a formatted notes field combining all discovery answers
+      let notes = "";
+      Object.entries(formattedDiscoveryData).forEach(([question, answer]) => {
+        notes += `${question}: ${answer}\n\n`;
+      });
+      
+      // Add notes field for Airtable
+      if (notes) {
+        data.notes = notes.trim();
+      }
+    }
+    
     // Add timestamp to webhook data
     const webhookData = {
       ...data,
@@ -479,11 +518,13 @@ app.post('/process-scheduling-preference', async (req, res) => {
       phone, 
       preferredDay,
       userId, 
-      call_id
+      call_id,
+      discovery_data
     } = req.body;
 
     console.log('Received scheduling preference:', { 
-      name, email, phone, preferredDay, userId, call_id 
+      name, email, phone, preferredDay, userId, call_id,
+      discovery_data: discovery_data ? 'Present' : 'Not present'
     });
 
     if (!email) {
@@ -501,6 +542,12 @@ app.post('/process-scheduling-preference', async (req, res) => {
       const callRecord = activeCalls.get(call_id);
       callRecord.schedulingComplete = true;
       callRecord.preferredDay = preferredDay;
+      
+      // Store discovery data if present
+      if (discovery_data) {
+        callRecord.discoveryData = discovery_data;
+      }
+      
       activeCalls.set(call_id, callRecord);
     }
 
@@ -515,7 +562,8 @@ app.post('/process-scheduling-preference', async (req, res) => {
       preferredDay: formattedDay,
       schedulingLink,
       call_id,
-      schedulingComplete: true
+      schedulingComplete: true,
+      discovery_data: discovery_data || {}
     };
     
     // Log and send webhook data
@@ -528,7 +576,8 @@ app.post('/process-scheduling-preference', async (req, res) => {
       message: 'Scheduling preferences processed and link will be sent',
       schedulingLink,
       webhookSent,
-      preferredDay: formattedDay
+      preferredDay: formattedDay,
+      discovery_data_received: !!discovery_data
     });
   } catch (error) {
     console.error('❌ Error in process-scheduling-preference endpoint:', error);
@@ -559,6 +608,7 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
       const phone = call.to_number || callRecord.phone || '';
       const userId = call.metadata?.user_id || callRecord.userId || '';
       let preferredDay = '';
+      let discoveryData = {};
       
       // Extract scheduling data from the call
       if (event === 'call_ended' || event === 'call_analyzed') {
@@ -584,9 +634,27 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
               preferredDay = analysisData.scheduling.day;
               console.log(`Found preferredDay in scheduling data: ${preferredDay}`);
             }
+            
+            // Extract discovery data if available
+            if (analysisData.discovery_data || analysisData.discoveryData) {
+              discoveryData = analysisData.discovery_data || analysisData.discoveryData || {};
+              console.log(`Found discovery data in analysis:`, discoveryData);
+            }
           } catch (error) {
             console.error('Error parsing analysis data:', error);
           }
+        }
+        
+        // Extract discovery data from variables if available
+        if (call.variables && Object.keys(call.variables).length > 0) {
+          // Look for discovery related variables
+          Object.entries(call.variables).forEach(([key, value]) => {
+            if (key.includes('question') || key.includes('discovery')) {
+              discoveryData[key] = value;
+            }
+          });
+          
+          console.log('Extracted discovery data from variables:', discoveryData);
         }
         
         // If we have an email and the call ended or was analyzed, always send webhook
@@ -594,11 +662,39 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
           console.log(`Sending webhook for call ${call.call_id} event ${event}`);
           
           // Prepare discovery data to include in webhook
-          const discoveryData = {
+          const enhancedDiscoveryData = {
+            ...discoveryData,
             call_duration: call.call_duration_seconds || 0,
             call_status: call.call_status || 'unknown',
             custom_data: call.custom_data || {}
           };
+          
+          // If no specific discovery data but we have transcripts, use those
+          if (Object.keys(discoveryData).length === 0 && call.transcript && call.transcript.length > 0) {
+            // Extract user questions and answers from transcript
+            const transcript = call.transcript;
+            let lastQuestion = '';
+            
+            transcript.forEach((item, index) => {
+              if (item.role === 'assistant' && item.content.includes('?')) {
+                // This is likely a question from the assistant
+                lastQuestion = item.content;
+                
+                // Check if the next item is a user response
+                if (transcript[index + 1] && transcript[index + 1].role === 'user') {
+                  const answer = transcript[index + 1].content;
+                  // Store in discovery data with a simplified key
+                  const questionKey = `transcript_q${index}`;
+                  enhancedDiscoveryData[questionKey] = {
+                    question: lastQuestion,
+                    answer: answer
+                  };
+                }
+              }
+            });
+            
+            console.log('Extracted Q&A from transcript:', enhancedDiscoveryData);
+          }
           
           // Get the Calendly scheduling link
           const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
@@ -614,7 +710,7 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
             schedulingComplete: true,
             call_status: call.call_status || 'unknown',
             call_event: event,
-            discovery_data: discoveryData
+            discovery_data: enhancedDiscoveryData
           });
           
           console.log(`✅ Webhook sent for call ${call.call_id} event ${event}`);
