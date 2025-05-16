@@ -63,11 +63,27 @@ function parseDate(dateStr) {
   }
 }
 
-// Enhanced helper function to send data to n8n webhook - UPDATED FOR N8N
+// IMPROVED: Enhanced helper function to send data to n8n webhook
 async function notifyN8nWebhook(data) {
   console.log('🚀 PREPARING TO SEND DATA TO N8N WEBHOOK:', JSON.stringify(data, null, 2));
   
   try {
+    // CRITICAL: Email validation
+    if (!data.email || data.email.trim() === '') {
+      console.error('⚠️ ERROR: No email provided in webhook data. Cannot process without an email.');
+      return false;
+    }
+    
+    // Debug log for tracking email
+    console.log('📧 Email validation in notifyN8nWebhook:');
+    console.log('- Email value:', data.email);
+    console.log('- Email type:', typeof data.email);
+    
+    // Ensure phone number is formatted with a + if it has digits
+    if (data.phone && !data.phone.startsWith('+') && /\d/.test(data.phone)) {
+      data.phone = '+1' + data.phone.replace(/[^0-9]/g, '');
+    }
+    
     // Format discovery data if present
     if (data.discovery_data) {
       // Format the discovery data into a structured format for Airtable
@@ -76,7 +92,7 @@ async function notifyN8nWebhook(data) {
       // Map discovery questions to better field names
       const questionMapping = {
         'question_0': 'How did you hear about us',
-        'question_1': 'Business or industry',
+        'question_1': 'Business/industry',
         'question_2': 'Main product',
         'question_3': 'Running ads',
         'question_4': 'Using CRM',
@@ -111,13 +127,13 @@ async function notifyN8nWebhook(data) {
     const webhookData = {
       ...data,
       timestamp: new Date().toISOString(),
-      webhook_version: '1.1'
+      webhook_version: '1.2' // Updated version
     };
     
     console.log('📤 SENDING DATA TO N8N WEBHOOK:', JSON.stringify(webhookData, null, 2));
     
     const response = await axios.post(DEFAULT_N8N_WEBHOOK_URL, webhookData, {
-      timeout: 10000, // 10 second timeout
+      timeout: 15000, // 15 second timeout (increased)
       headers: {
         'Content-Type': 'application/json',
         'X-Webhook-Source': 'Nexella-Server'
@@ -141,18 +157,39 @@ async function notifyN8nWebhook(data) {
       console.error('❌ SETUP ERROR:', error.message);
     }
     
-    // Retry logic
+    // Enhanced retry logic
     console.log('🔄 Attempting to retry webhook notification in 3 seconds...');
-    setTimeout(async () => {
-      try {
-        const retryResponse = await axios.post(DEFAULT_N8N_WEBHOOK_URL, data);
-        console.log(`✅ RETRY SUCCESSFUL. Response status: ${retryResponse.status}`);
-      } catch (retryError) {
-        console.error(`❌ RETRY FAILED: ${retryError.message}`);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Ensure we still have email
+      if (!data.email) {
+        console.error('❌ RETRY FAILED: Missing email in data');
+        return false;
       }
-    }, 3000);
-    
-    return false;
+      
+      // Make sure we're sending valid data
+      const retryData = {
+        ...data,
+        retry: true,
+        timestamp: new Date().toISOString()
+      };
+      
+      const retryResponse = await axios.post(DEFAULT_N8N_WEBHOOK_URL, retryData, {
+        timeout: 15000,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Source': 'Nexella-Server',
+          'X-Retry': 'true'
+        }
+      });
+      
+      console.log(`✅ RETRY SUCCESSFUL. Response status: ${retryResponse.status}`);
+      return true;
+    } catch (retryError) {
+      console.error(`❌ RETRY FAILED: ${retryError.message}`);
+      return false;
+    }
   }
 }
 
@@ -187,7 +224,7 @@ app.get('/test-webhook', async (req, res) => {
   try {
     const testData = {
       name: "Test User",
-      email: "test@example.com",
+      email: "test@example.com", // Required field
       phone: "+12345678900",
       call_id: "test123",
       schedulingComplete: true,
@@ -321,11 +358,12 @@ app.post('/release-slot', (req, res) => {
   }
 });
 
-// Updated endpoint to trigger a Retell call using SDK
+// IMPROVED: Updated endpoint to trigger a Retell call using SDK with better error handling
 app.post('/trigger-retell-call', async (req, res) => {
   try {
     const { name, email, phone, userId } = req.body;
     
+    // Validate required fields
     if (!phone) {
       return res.status(400).json({ 
         success: false, 
@@ -333,24 +371,42 @@ app.post('/trigger-retell-call', async (req, res) => {
       });
     }
     
-    console.log('Triggering Retell call with:', { name, email, phone });
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing email field - this is required for lead tracking"
+      });
+    }
+    
+    // Ensure phone is formatted correctly
+    let formattedPhone = phone;
+    if (!formattedPhone.startsWith('+')) {
+      formattedPhone = '+1' + formattedPhone.replace(/[^0-9]/g, '');
+    }
+    
+    console.log('Triggering Retell call with:', { name, email, formattedPhone });
+    console.log('📧 Using email for Retell call:', email);
     
     // First try using the SDK
     if (retellClient) {
       try {
+        // Create the call metadata
+        const metadata = {
+          customer_name: name || "",
+          customer_email: email, // Using validated email
+          user_id: userId || `user_${formattedPhone}`,
+          needs_scheduling: true,
+          call_source: "website_form",
+          n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
+        };
+        
+        console.log('Using metadata for call:', metadata);
+        
         const response = await retellClient.call.createPhoneCall({
           from_number: process.env.RETELL_FROM_NUMBER,
-          to_number: phone,
+          to_number: formattedPhone,
           agent_id: process.env.RETELL_AGENT_ID,
-          metadata: {
-            customer_name: name || "",
-            customer_email: email || "",
-            user_id: userId || `user_${Date.now()}`,
-            needs_scheduling: true,
-            call_source: "website_form",
-            // Updated for n8n
-            n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
-          },
+          metadata: metadata,
           // New: Add a callback URL for the agent to trigger when scheduling is complete
           webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
           webhook_events: ["call_ended", "call_analyzed"]
@@ -360,14 +416,15 @@ app.post('/trigger-retell-call', async (req, res) => {
         const callId = response.call_id;
         activeCalls.set(callId, {
           id: callId,
-          phone,
+          phone: formattedPhone,
           name,
           email,
           userId: userId || `user_${Date.now()}`,
           startTime: Date.now(),
           state: 'initiated',
           discoveryComplete: false,
-          schedulingComplete: false
+          schedulingComplete: false,
+          metadata: metadata
         });
         
         console.log('✅ Retell outbound call initiated with SDK:', response);
@@ -384,19 +441,23 @@ app.post('/trigger-retell-call', async (req, res) => {
     
     // Fallback to direct axios call if SDK fails or isn't initialized
     try {
+      // Create metadata for the call
+      const metadata = {
+        customer_name: name || "",
+        customer_email: email, // Using validated email
+        user_id: userId || `user_${formattedPhone}`,
+        needs_scheduling: true,
+        call_source: "website_form",
+        n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
+      };
+      
+      console.log('Using fallback axios with metadata:', metadata);
+      
       const response = await axios.post('https://api.retellai.com/v1/calls', {
         from_number: process.env.RETELL_FROM_NUMBER,
-        to_number: phone,
+        to_number: formattedPhone,
         agent_id: process.env.RETELL_AGENT_ID,
-        metadata: {
-          customer_name: name || "",
-          customer_email: email || "",
-          user_id: userId || `user_${Date.now()}`,
-          needs_scheduling: true,
-          call_source: "website_form",
-          // Updated for n8n
-          n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
-        },
+        metadata: metadata,
         webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
         webhook_events: ["call_ended", "call_analyzed"]
       }, {
@@ -410,14 +471,15 @@ app.post('/trigger-retell-call', async (req, res) => {
       const callId = response.data.call_id;
       activeCalls.set(callId, {
         id: callId,
-        phone,
+        phone: formattedPhone,
         name,
         email,
         userId: userId || `user_${Date.now()}`,
         startTime: Date.now(),
         state: 'initiated',
         discoveryComplete: false,
-        schedulingComplete: false
+        schedulingComplete: false,
+        metadata: metadata
       });
       
       console.log('✅ Retell outbound call initiated with axios:', response.data);
@@ -442,7 +504,7 @@ app.post('/trigger-retell-call', async (req, res) => {
   }
 });
 
-// NEW: Modified endpoint for sending scheduling link using n8n
+// IMPROVED: Modified endpoint for sending scheduling link using n8n
 app.post('/send-scheduling-link', async (req, res) => {
   try {
     const { 
@@ -458,10 +520,40 @@ app.post('/send-scheduling-link', async (req, res) => {
       call_id, name, email, phone, preferredDay
     });
     
-    if (!email) {
+    // Validate email is present
+    if (!email && !call_id) {
       return res.status(400).json({
         success: false,
-        error: "Missing email address for scheduling link"
+        error: "Missing email address or call_id for scheduling link"
+      });
+    }
+    
+    // Debug email tracking
+    console.log('📧 Email check in send-scheduling-link:');
+    console.log('- Email provided:', email);
+    console.log('- Call ID:', call_id);
+    
+    // Get email from call record if available
+    let finalEmail = email;
+    let finalName = name;
+    let finalPhone = phone;
+    
+    // Try to get data from active calls if we have a call_id
+    if (call_id && activeCalls.has(call_id) && !finalEmail) {
+      const callRecord = activeCalls.get(call_id);
+      if (!finalEmail && callRecord.email) {
+        finalEmail = callRecord.email;
+        console.log('Retrieved email from call record:', finalEmail);
+      }
+      if (!finalName && callRecord.name) finalName = callRecord.name;
+      if (!finalPhone && callRecord.phone) finalPhone = callRecord.phone;
+    }
+    
+    // Validate we have an email after lookups
+    if (!finalEmail) {
+      return res.status(400).json({
+        success: false,
+        error: "Could not find an email address for scheduling - this is required"
       });
     }
     
@@ -481,9 +573,9 @@ app.post('/send-scheduling-link', async (req, res) => {
     
     // Prepare webhook data with scheduling link
     const webhookData = {
-      name,
-      email,
-      phone,
+      name: finalName,
+      email: finalEmail,
+      phone: finalPhone,
       preferredDay: preferredDay || '',
       schedulingLink, // This is the key field - sending a link instead of booking directly
       call_id,
@@ -509,7 +601,7 @@ app.post('/send-scheduling-link', async (req, res) => {
   }
 });
 
-// Modified: Endpoint for handling preferred scheduling and sending links
+// IMPROVED: Endpoint for handling preferred scheduling and sending links
 app.post('/process-scheduling-preference', async (req, res) => {
   try {
     const { 
@@ -527,11 +619,36 @@ app.post('/process-scheduling-preference', async (req, res) => {
       discovery_data: discovery_data ? 'Present' : 'Not present'
     });
 
-    if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "Missing email address" 
-      });
+    // Debug email tracking
+    console.log('📧 Email Debug in process-scheduling-preference:');
+    console.log('- Received email in request:', email);
+    console.log('- Call ID present:', Boolean(call_id));
+    
+    // Validate email is required
+    if (!email || email.trim() === '') {
+      // Try to find email in call record if we have a call ID
+      let recoveredEmail = null;
+      
+      if (call_id && activeCalls.has(call_id)) {
+        const callRecord = activeCalls.get(call_id);
+        if (callRecord.email) {
+          recoveredEmail = callRecord.email;
+          console.log('Recovered email from call record:', recoveredEmail);
+        } else if (callRecord.metadata && callRecord.metadata.customer_email) {
+          recoveredEmail = callRecord.metadata.customer_email;
+          console.log('Recovered email from call metadata:', recoveredEmail);
+        }
+      }
+      
+      if (!recoveredEmail) {
+        return res.status(400).json({
+          success: false,
+          error: "Missing email address - this is required for processing"
+        });
+      }
+      
+      // Use the recovered email
+      console.log('Using recovered email:', recoveredEmail);
     }
 
     // Get the Calendly scheduling link
@@ -556,9 +673,9 @@ app.post('/process-scheduling-preference', async (req, res) => {
 
     // Prepare webhook data
     const webhookData = {
-      name,
-      email,
-      phone,
+      name: name || '',
+      email: email || (call_id && activeCalls.has(call_id) ? activeCalls.get(call_id).email : ''),
+      phone: phone || '',
       preferredDay: formattedDay,
       schedulingLink,
       call_id,
@@ -566,8 +683,16 @@ app.post('/process-scheduling-preference', async (req, res) => {
       discovery_data: discovery_data || {}
     };
     
+    // Final email validation
+    if (!webhookData.email || webhookData.email.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: "Could not find a valid email after recovery attempts"
+      });
+    }
+    
     // Log and send webhook data
-    console.log('📤 Sending n8n webhook for scheduling preference:', webhookData);
+    console.log('📤 Sending n8n webhook for scheduling preference with email:', webhookData.email);
     // Updated to use the n8n webhook function
     const webhookSent = await notifyN8nWebhook(webhookData);
 
@@ -598,6 +723,14 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
     
     if (call && call.call_id) {
       console.log(`Call ID: ${call.call_id}, Status: ${call.call_status}`);
+      
+      // Debug email tracking
+      console.log('📧 Email check in retell webhook:');
+      if (call.metadata && call.metadata.customer_email) {
+        console.log('- customer_email in metadata:', call.metadata.customer_email);
+      } else {
+        console.log('- No customer_email in metadata!');
+      }
       
       // Update our internal call record
       const callRecord = activeCalls.get(call.call_id) || {};
@@ -657,284 +790,57 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
           console.log('Extracted discovery data from variables:', discoveryData);
         }
         
-        // If we have an email and the call ended or was analyzed, always send webhook
-        if (email) {
-          console.log(`Sending webhook for call ${call.call_id} event ${event}`);
+        // Extract discovery data from transcript
+        if (Object.keys(discoveryData).length < 4 && call.transcript && call.transcript.length > 0) {
+          console.log('Trying to extract discovery data from transcript');
           
-          // Prepare discovery data to include in webhook
-          const enhancedDiscoveryData = {
-            ...discoveryData,
-            call_duration: call.call_duration_seconds || 0,
-            call_status: call.call_status || 'unknown',
-            custom_data: call.custom_data || {}
-          };
+          // Define the discovery questions to look for
+          const discoveryQuestions = [
+            'How did you hear about us?',
+            'What line of business are you in? What\'s your business model?',
+            'What\'s your main product and typical price point?',
+            'Are you running ads (Meta, Google, TikTok)?',
+            'Are you using a CRM like GoHighLevel?',
+            'What problems are you running into?'
+          ];
           
-          // If no specific discovery data but we have transcripts, use those
-          if (Object.keys(discoveryData).length === 0 && call.transcript && call.transcript.length > 0) {
-            // Extract user questions and answers from transcript
-            const transcript = call.transcript;
-            let lastQuestion = '';
+          // Shortened versions of questions to match in the transcript
+          const shortQuestions = [
+            'hear about',
+            'business',
+            'product',
+            'running ads',
+            'crm',
+            'problems'
+          ];
+          
+          // Extract user responses to bot questions from transcript
+          for (let i = 0; i < call.transcript.length - 1; i++) {
+            const message = call.transcript[i];
+            const nextMessage = call.transcript[i + 1];
             
-            transcript.forEach((item, index) => {
-              if (item.role === 'assistant' && item.content.includes('?')) {
-                // This is likely a question from the assistant
-                lastQuestion = item.content;
-                
-                // Check if the next item is a user response
-                if (transcript[index + 1] && transcript[index + 1].role === 'user') {
-                  const answer = transcript[index + 1].content;
-                  // Store in discovery data with a simplified key
-                  const questionKey = `transcript_q${index}`;
-                  enhancedDiscoveryData[questionKey] = {
-                    question: lastQuestion,
-                    answer: answer
-                  };
+            // Look for bot messages that contain questions followed by user responses
+            if (message.role === 'assistant' && nextMessage.role === 'user') {
+              const botText = message.content.toLowerCase();
+              
+              // Check each discovery question
+              shortQuestions.forEach((questionText, questionIndex) => {
+                if (botText.includes(questionText)) {
+                  // Found a matching question, store the user's response
+                  discoveryData[`question_${questionIndex}`] = nextMessage.content;
+                  console.log(`Found answer to question ${questionIndex} in transcript: ${nextMessage.content.substring(0, 30)}...`);
                 }
-              }
-            });
-            
-            console.log('Extracted Q&A from transcript:', enhancedDiscoveryData);
+              });
+            }
           }
-          
-          // Get the Calendly scheduling link
-          const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
-          
-          // Send webhook to n8n
-          await notifyN8nWebhook({
-            name,
-            email,
-            phone,
-            call_id: call.call_id,
-            preferredDay: preferredDay || 'Not specified',
-            schedulingLink,
-            schedulingComplete: true,
-            call_status: call.call_status || 'unknown',
-            call_event: event,
-            discovery_data: enhancedDiscoveryData
-          });
-          
-          console.log(`✅ Webhook sent for call ${call.call_id} event ${event}`);
-        } else {
-          console.warn(`⚠️ No email found for call ${call.call_id}, cannot send webhook`);
         }
         
-        // Clean up call record after sending webhook
-        setTimeout(() => {
-          activeCalls.delete(call.call_id);
-          console.log(`Cleaned up call record for ${call.call_id}`);
-        }, 5 * 60 * 1000); // 5 minutes timeout
-      }
-    }
-    
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Error handling Retell webhook:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Update conversation state from Retell agent
-app.post('/update-conversation', express.json(), async (req, res) => {
-  try {
-    const { call_id, discoveryComplete, preferredDay, schedulingData } = req.body;
-    
-    if (!call_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing call_id'
-      });
-    }
-    
-    // Get the call record
-    const callRecord = activeCalls.get(call_id);
-    if (!callRecord) {
-      return res.status(404).json({
-        success: false,
-        error: 'Call not found'
-      });
-    }
-    
-    // Update discovery state if provided
-    if (discoveryComplete !== undefined) {
-      callRecord.discoveryComplete = discoveryComplete;
-      console.log(`Updated discovery state for call ${call_id}: ${discoveryComplete}`);
-      
-      // If discovery is complete, notify webhook
-      if (discoveryComplete) {
-        await notifyN8nWebhook({
-          name: callRecord.name,
-          email: callRecord.email,
-          phone: callRecord.phone,
-          call_id,
-          discoveryComplete: true
-        });
-      }
-    }
-    
-    // Update preferredDay if provided
-    if (preferredDay) {
-      callRecord.preferredDay = preferredDay;
-      console.log(`Updated preferredDay for call ${call_id}: ${preferredDay}`);
-      
-      // If we have a preferredDay, send scheduling data
-      const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
-      
-      await notifyN8nWebhook({
-        name: callRecord.name,
-        email: callRecord.email,
-        phone: callRecord.phone,
-        call_id,
-        preferredDay,
-        schedulingLink,
-        schedulingComplete: true
-      });
-      
-      console.log(`Sent scheduling webhook for call ${call_id}`);
-    }
-    
-    // Update scheduling data if provided
-    if (schedulingData) {
-      callRecord.schedulingData = schedulingData;
-      console.log(`Updated scheduling data for call ${call_id}: ${JSON.stringify(schedulingData)}`);
-      
-      // Send scheduling data to webhook
-      await notifyN8nWebhook({
-        name: callRecord.name,
-        email: callRecord.email,
-        phone: callRecord.phone,
-        call_id,
-        schedulingData
-      });
-    }
-    
-    // Save the updated record
-    activeCalls.set(call_id, callRecord);
-    
-    res.status(200).json({
-      success: true,
-      callRecord
-    });
-  } catch (error) {
-    console.error('Error updating conversation:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Simple endpoint to manually trigger a scheduling email
-app.get('/manual-webhook', async (req, res) => {
-  try {
-    const testData = {
-      name: req.query.name || "Jaden",
-      email: req.query.email || "jadenlugoco@gmail.com",
-      phone: req.query.phone || " 12099387088",
-      schedulingComplete: true,
-      preferredDay: req.query.day || "Monday",
-      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min"
-    };
-    
-    console.log('Sending manual webhook data:', testData);
-    
-    const success = await notifyN8nWebhook(testData);
-    
-    res.status(200).json({
-      success,
-      message: success ? 'Webhook sent successfully' : 'Failed to send webhook',
-      data: testData
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Manual webhook trigger for testing
-app.post('/manual-webhook', async (req, res) => {
-  try {
-    const webhookData = req.body;
-    
-    if (!webhookData || Object.keys(webhookData).length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing webhook data"
-      });
-    }
-    
-    // Add required fields if missing
-    if (!webhookData.schedulingComplete) {
-      webhookData.schedulingComplete = true;
-    }
-    
-    console.log('📤 Manually triggering webhook with data:', webhookData);
-    const success = await notifyN8nWebhook(webhookData);
-    
-    res.status(200).json({
-      success,
-      message: success ? "Webhook sent successfully" : "Failed to send webhook",
-      data: webhookData
-    });
-  } catch (error) {
-    console.error('❌ Error in manual-webhook endpoint:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Test endpoint for Retell API using the SDK
-app.get('/test-retell-api', async (req, res) => {
-  try {
-    // First try with SDK
-    if (retellClient) {
-      try {
-        const agents = await retellClient.agent.list();
-        
-        return res.status(200).json({
-          success: true,
-          message: 'Successfully connected to Retell API using SDK',
-          agents_count: agents.agents?.length || 0,
-          method: 'sdk'
-        });
-      } catch (sdkError) {
-        console.error('❌ SDK Error connecting to Retell API:', sdkError);
-        // Fall through to axios fallback
-      }
-    }
-    
-    // Fallback to axios
-    if (!process.env.RETELL_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "Missing RETELL_API_KEY environment variable"
-      });
-    }
-    
-    const response = await axios.get('https://api.retellai.com/v1/agents', {
-      headers: {
-        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Successfully connected to Retell API using axios',
-      agents_count: response.data.agents?.length || 0,
-      method: 'axios'
-    });
-  } catch (error) {
-    console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
-    
-    res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message
-    });
-  }
-});
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Trigger server running on port ${PORT}`);
-});
+        // Validate email for webhooks
+        if (!email) {
+          console.error('⚠️ NO EMAIL FOUND FOR CALL! Cannot send webhook.');
+          
+          // Try to look up from our activeCalls map
+          if (activeCalls.has(call.call_id)) {
+            const storedCall = activeCalls.get(call.call_id);
+            if (storedCall.email) {
+              console.log(`Found email in
