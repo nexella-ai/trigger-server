@@ -1,123 +1,4 @@
-
-
-// Simple endpoint to manually trigger a scheduling email
-app.get('/manual-webhook', async (req, res) => {
-  try {
-    const testData = {
-      name: req.query.name || "Jaden",
-      email: req.query.email || "jadenlugoco@gmail.com",
-      phone: req.query.phone || " 12099387088",
-      schedulingComplete: true,
-      preferredDay: req.query.day || "Monday",
-      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min"
-    };
-    
-    console.log('Sending manual webhook data:', testData);
-    
-    const success = await notifyN8nWebhook(testData);
-    
-    res.status(200).json({
-      success,
-      message: success ? 'Webhook sent successfully' : 'Failed to send webhook',
-      data: testData
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Manual webhook trigger for testing
-app.post('/manual-webhook', async (req, res) => {
-  try {
-    const webhookData = req.body;
-    
-    if (!webhookData || Object.keys(webhookData).length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing webhook data"
-      });
-    }
-    
-    // Add required fields if missing
-    if (!webhookData.schedulingComplete) {
-      webhookData.schedulingComplete = true;
-    }
-    
-    console.log('📤 Manually triggering webhook with data:', webhookData);
-    const success = await notifyN8nWebhook(webhookData);
-    
-    res.status(200).json({
-      success,
-      message: success ? "Webhook sent successfully" : "Failed to send webhook",
-      data: webhookData
-    });
-  } catch (error) {
-    console.error('❌ Error in manual-webhook endpoint:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Test endpoint for Retell API using the SDK
-app.get('/test-retell-api', async (req, res) => {
-  try {
-    // First try with SDK
-    if (retellClient) {
-      try {
-        const agents = await retellClient.agent.list();
-        
-        return res.status(200).json({
-          success: true,
-          message: 'Successfully connected to Retell API using SDK',
-          agents_count: agents.agents?.length || 0,
-          method: 'sdk'
-        });
-      } catch (sdkError) {
-        console.error('❌ SDK Error connecting to Retell API:', sdkError);
-        // Fall through to axios fallback
-      }
-    }
-    
-    // Fallback to axios
-    if (!process.env.RETELL_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "Missing RETELL_API_KEY environment variable"
-      });
-    }
-    
-    const response = await axios.get('https://api.retellai.com/v1/agents', {
-      headers: {
-        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Successfully connected to Retell API using axios',
-      agents_count: response.data.agents?.length || 0,
-      method: 'axios'
-    });
-  } catch (error) {
-    console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
-    
-    res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message
-    });
-  }
-});
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Trigger server running on port ${PORT}`);
-});require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const Retell = require('retell-sdk').default;
@@ -937,4 +818,123 @@ app.post('/update-conversation', express.json(), async (req, res) => {
     console.error('Error updating conversation:', error);
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Simple endpoint to manually trigger a scheduling email
+app.get('/manual-webhook', async (req, res) => {
+  try {
+    const testData = {
+      name: req.query.name || "Jaden",
+      email: req.query.email || "jadenlugoco@gmail.com",
+      phone: req.query.phone || " 12099387088",
+      schedulingComplete: true,
+      preferredDay: req.query.day || "Monday",
+      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min"
+    };
+    
+    console.log('Sending manual webhook data:', testData);
+    
+    const success = await notifyN8nWebhook(testData);
+    
+    res.status(200).json({
+      success,
+      message: success ? 'Webhook sent successfully' : 'Failed to send webhook',
+      data: testData
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Manual webhook trigger for testing
+app.post('/manual-webhook', async (req, res) => {
+  try {
+    const webhookData = req.body;
+    
+    if (!webhookData || Object.keys(webhookData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing webhook data"
+      });
+    }
+    
+    // Add required fields if missing
+    if (!webhookData.schedulingComplete) {
+      webhookData.schedulingComplete = true;
+    }
+    
+    console.log('📤 Manually triggering webhook with data:', webhookData);
+    const success = await notifyN8nWebhook(webhookData);
+    
+    res.status(200).json({
+      success,
+      message: success ? "Webhook sent successfully" : "Failed to send webhook",
+      data: webhookData
+    });
+  } catch (error) {
+    console.error('❌ Error in manual-webhook endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test endpoint for Retell API using the SDK
+app.get('/test-retell-api', async (req, res) => {
+  try {
+    // First try with SDK
+    if (retellClient) {
+      try {
+        const agents = await retellClient.agent.list();
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Successfully connected to Retell API using SDK',
+          agents_count: agents.agents?.length || 0,
+          method: 'sdk'
+        });
+      } catch (sdkError) {
+        console.error('❌ SDK Error connecting to Retell API:', sdkError);
+        // Fall through to axios fallback
+      }
+    }
+    
+    // Fallback to axios
+    if (!process.env.RETELL_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: "Missing RETELL_API_KEY environment variable"
+      });
+    }
+    
+    const response = await axios.get('https://api.retellai.com/v1/agents', {
+      headers: {
+        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Successfully connected to Retell API using axios',
+      agents_count: response.data.agents?.length || 0,
+      method: 'axios'
+    });
+  } catch (error) {
+    console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🚀 Trigger server running on port ${PORT}`);
 });
