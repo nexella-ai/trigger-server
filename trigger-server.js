@@ -201,432 +201,6 @@ app.get('/test-webhook', async (req, res) => {
     
     res.status(200).json({
       success,
-      message: success ? "Webhook sent successfully" : "Failed to send webhook",
-      data: webhookData
-    });
-  } catch (error) {
-    console.error('❌ Error in manual-webhook endpoint:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Enhanced debug endpoint for testing the complete workflow
-app.post('/debug-test-webhook', async (req, res) => {
-  try {
-    console.log('🧪 DEBUG TEST WEBHOOK TRIGGERED');
-    
-    // Use provided data or default test data
-    const testData = {
-      name: req.body.name || "Jaden Test",
-      email: req.body.email || "jadenlugoco@gmail.com", 
-      phone: req.body.phone || "+12099387088",
-      preferredDay: req.body.preferredDay || "Monday",
-      call_id: req.body.call_id || `test_call_${Date.now()}`,
-      schedulingComplete: true,
-      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min",
-      
-      // Complete discovery data for testing
-      discovery_data: req.body.discovery_data || {
-        "How did you hear about us": "Instagram",
-        "Business/Industry": "Solar",
-        "Main product": "Solar panels", 
-        "Running ads": "No",
-        "Using CRM": "Yes. Go high level",
-        "Pain points": "I'm not following up the leads quickly enough"
-      }
-    };
-    
-    console.log('🧪 Sending test data to n8n webhook:', JSON.stringify(testData, null, 2));
-    
-    // Send to n8n webhook
-    const success = await notifyN8nWebhook(testData);
-    
-    if (success) {
-      res.status(200).json({
-        success: true,
-        message: 'Debug test webhook sent successfully to n8n',
-        data: testData,
-        webhook_url: DEFAULT_N8N_WEBHOOK_URL
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to send debug test webhook to n8n',
-        data: testData
-      });
-    }
-  } catch (error) {
-    console.error('❌ Error in debug test webhook:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      message: 'Debug test webhook failed'
-    });
-  }
-});
-
-// Quick GET endpoint for easy browser testing
-app.get('/debug-test-webhook', async (req, res) => {
-  try {
-    console.log('🧪 DEBUG TEST WEBHOOK TRIGGERED (GET)');
-    
-    // Use query parameters or defaults
-    const testData = {
-      name: req.query.name || "Jaden Test Browser",
-      email: req.query.email || "jadenlugoco@gmail.com",
-      phone: req.query.phone || "+12099387088", 
-      preferredDay: req.query.day || "Tuesday",
-      call_id: `browser_test_${Date.now()}`,
-      schedulingComplete: true,
-      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min",
-      
-      // Complete discovery data
-      discovery_data: {
-        "How did you hear about us": req.query.source || "Instagram",
-        "Business/Industry": req.query.industry || "Solar",
-        "Main product": req.query.product || "Solar panels",
-        "Running ads": req.query.ads || "No", 
-        "Using CRM": req.query.crm || "Yes. Go high level",
-        "Pain points": req.query.pain || "Not following up leads quickly enough"
-      }
-    };
-    
-    console.log('🧪 Browser test - sending to n8n:', JSON.stringify(testData, null, 2));
-    
-    const success = await notifyN8nWebhook(testData);
-    
-    res.status(200).send(`
-      <html>
-        <head><title>Debug Test Results</title></head>
-        <body style="font-family: Arial; padding: 20px;">
-          <h2>🧪 Debug Test Webhook Results</h2>
-          <p><strong>Status:</strong> ${success ? '✅ SUCCESS' : '❌ FAILED'}</p>
-          <p><strong>Webhook URL:</strong> ${DEFAULT_N8N_WEBHOOK_URL}</p>
-          <h3>Test Data Sent:</h3>
-          <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px;">${JSON.stringify(testData, null, 2)}</pre>
-          
-          <h3>Quick Test Links:</h3>
-          <ul>
-            <li><a href="/debug-test-webhook?name=John&email=john@test.com&industry=Real Estate&product=Houses">Real Estate Test</a></li>
-            <li><a href="/debug-test-webhook?name=Sarah&email=sarah@test.com&industry=E-commerce&product=Clothing">E-commerce Test</a></li>
-            <li><a href="/debug-test-webhook?name=Mike&email=mike@test.com&industry=SaaS&product=Software">SaaS Test</a></li>
-          </ul>
-          
-          <p><a href="/debug-test-webhook">🔄 Run Another Test</a></p>
-        </body>
-      </html>
-    `);
-    
-  } catch (error) {
-    console.error('❌ Error in browser debug test:', error);
-    res.status(500).send(`
-      <html>
-        <body style="font-family: Arial; padding: 20px;">
-          <h2>❌ Debug Test Failed</h2>
-          <p><strong>Error:</strong> ${error.message}</p>
-          <p><a href="/debug-test-webhook">🔄 Try Again</a></p>
-        </body>
-      </html>
-    `);
-  }
-});
-
-// Test endpoint specifically for the N8N discovery flow
-app.get('/test-n8n-flow', async (req, res) => {
-  try {
-    console.log('🧪 TESTING N8N DISCOVERY FLOW');
-    
-    // Use query parameters or defaults for easy browser testing
-    const testData = {
-      name: req.query.name || "Discovery Test User",
-      email: req.query.email || "discoverytest@example.com",
-      phone: req.query.phone || "+1555123456",
-      preferredDay: req.query.day || "Friday", 
-      call_id: `n8n_test_${Date.now()}`,
-      schedulingComplete: true,
-      
-      // Complete discovery data with all 6 answers
-      discovery_data: {
-        "How did you hear about us": req.query.source || "LinkedIn",
-        "Business/Industry": req.query.industry || "Digital Marketing",
-        "Main product": req.query.product || "Marketing Software", 
-        "Running ads": req.query.ads || "Yes, Meta and Google",
-        "Using CRM": req.query.crm || "Yes, HubSpot",
-        "Pain points": req.query.pain || "Lead attribution is unclear"
-      }
-    };
-    
-    console.log('📤 Sending test data directly to N8N webhook:', JSON.stringify(testData, null, 2));
-    
-    // Send directly to N8N webhook (not through our server)
-    const n8nResponse = await axios.post('https://n8n-clp2.onrender.com/webhook/retell-scheduling', testData, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000 // 30 second timeout for N8N processing
-    });
-    
-    console.log('✅ N8N Response:', n8nResponse.data);
-    
-    // Create a nice HTML response showing what happened
-    res.status(200).send(`
-      <html>
-        <head>
-          <title>N8N Discovery Flow Test</title>
-          <style>
-            body { font-family: Arial; padding: 20px; max-width: 800px; }
-            .success { color: green; }
-            .data-box { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0; }
-            .discovery-item { margin: 5px 0; padding: 5px; background: #e8f4fd; border-radius: 3px; }
-            .test-links { margin: 20px 0; }
-            .test-links a { display: inline-block; margin: 5px; padding: 8px 15px; background: #007cba; color: white; text-decoration: none; border-radius: 4px; }
-          </style>
-        </head>
-        <body>
-          <h2>🧪 N8N Discovery Flow Test Results</h2>
-          <p class="success"><strong>✅ SUCCESS!</strong> Data sent to N8N workflow</p>
-          
-          <h3>📧 Contact Info Sent:</h3>
-          <div class="data-box">
-            <strong>Name:</strong> ${testData.name}<br>
-            <strong>Email:</strong> ${testData.email}<br>
-            <strong>Phone:</strong> ${testData.phone}<br>
-            <strong>Preferred Day:</strong> ${testData.preferredDay}
-          </div>
-          
-          <h3>🔍 Discovery Answers Sent:</h3>
-          <div class="data-box">
-            ${Object.entries(testData.discovery_data).map(([question, answer]) => 
-              `<div class="discovery-item"><strong>${question}:</strong> ${answer}</div>`
-            ).join('')}
-          </div>
-          
-          <h3>🎯 What Should Happen Next:</h3>
-          <ol>
-            <li>N8N should process this data through the "Code" node</li>
-            <li>Create/update record in "Email Log" Airtable</li>
-            <li>Check if email already sent</li>
-            <li>Generate Calendly link</li>
-            <li>Send email with booking link</li>
-            <li>Update Email Log with discovery data</li>
-          </ol>
-          
-          <div class="test-links">
-            <h3>🔄 Try Different Test Scenarios:</h3>
-            <a href="/test-n8n-flow?name=Solar Sam&email=sam@solar.com&industry=Solar&product=Panels&ads=No&crm=GoHighLevel&pain=Follow up issues">Solar Industry</a>
-            <a href="/test-n8n-flow?name=Tech Tim&email=tim@tech.com&industry=SaaS&product=Software&ads=Yes&crm=Salesforce&pain=Lead quality">SaaS Company</a>
-            <a href="/test-n8n-flow?name=Real Estate Rita&email=rita@realty.com&industry=Real Estate&product=Houses&ads=Yes&crm=No&pain=Market competition">Real Estate</a>
-            <a href="/test-n8n-flow?name=Agency Alice&email=alice@agency.com&industry=Marketing&product=Services&ads=Yes&crm=HubSpot&pain=Client retention">Marketing Agency</a>
-          </div>
-          
-          <h3>📊 Check Results In:</h3>
-          <ul>
-            <li><strong>Airtable Email Log:</strong> Should have new record with discovery data</li>
-            <li><strong>Email:</strong> ${testData.email} should receive booking link</li>
-            <li><strong>N8N Logs:</strong> Check your N8N workflow execution logs</li>
-          </ul>
-          
-          <p><strong>N8N Response:</strong></p>
-          <div class="data-box">
-            <pre>${JSON.stringify(n8nResponse.data, null, 2)}</pre>
-          </div>
-          
-          <p><a href="/test-n8n-flow">🔄 Run Another Test</a></p>
-        </body>
-      </html>
-    `);
-    
-  } catch (error) {
-    console.error('❌ Error testing N8N flow:', error);
-    
-    res.status(500).send(`
-      <html>
-        <body style="font-family: Arial; padding: 20px;">
-          <h2>❌ N8N Flow Test Failed</h2>
-          <p><strong>Error:</strong> ${error.message}</p>
-          
-          ${error.response ? `
-            <h3>N8N Response Details:</h3>
-            <pre style="background: #ffe6e6; padding: 10px; border-radius: 5px;">
-Status: ${error.response.status}
-Data: ${JSON.stringify(error.response.data, null, 2)}
-            </pre>
-          ` : ''}
-          
-          <p><strong>Possible Issues:</strong></p>
-          <ul>
-            <li>N8N webhook might be down</li>
-            <li>Airtable credentials might be expired</li>
-            <li>Email SMTP settings might be incorrect</li>
-            <li>Workflow might be paused</li>
-          </ul>
-          
-          <p><a href="/test-n8n-flow">🔄 Try Again</a></p>
-        </body>
-      </html>
-    `);
-  }
-});
-
-// POST version for API testing
-app.post('/test-n8n-flow', async (req, res) => {
-  try {
-    const testData = {
-      name: req.body.name || "API Test User",
-      email: req.body.email || "apitest@example.com", 
-      phone: req.body.phone || "+1555999888",
-      preferredDay: req.body.preferredDay || "Thursday",
-      call_id: req.body.call_id || `api_test_${Date.now()}`,
-      schedulingComplete: true,
-      discovery_data: req.body.discovery_data || {
-        "How did you hear about us": "API Test",
-        "Business/Industry": "Testing",
-        "Main product": "Test Products",
-        "Running ads": "Maybe",
-        "Using CRM": "Test CRM",
-        "Pain points": "Testing pain points"
-      }
-    };
-    
-    console.log('📤 API Test - sending to N8N:', JSON.stringify(testData, null, 2));
-    
-    const n8nResponse = await axios.post('https://n8n-clp2.onrender.com/webhook/retell-scheduling', testData, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Successfully sent test data to N8N workflow',
-      test_data: testData,
-      n8n_response: n8nResponse.data,
-      instructions: {
-        check_airtable: "Look for new record in Email Log table",
-        check_email: `Email should be sent to ${testData.email}`,
-        check_n8n: "Review N8N workflow execution logs"
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ API test error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      n8n_response: error.response?.data || null
-    });
-  }
-});
-
-// Endpoint to test just the discovery data mapping
-app.post('/debug-discovery-mapping', async (req, res) => {
-  try {
-    console.log('🔍 TESTING DISCOVERY DATA MAPPING');
-    
-    const rawDiscoveryData = req.body.discovery_data || {
-      "question_0": "Instagram",
-      "question_1": "Solar", 
-      "question_2": "Solar panels",
-      "question_3": "No",
-      "question_4": "Yes. Go high level", 
-      "question_5": "Not following up leads quickly"
-    };
-    
-    // Test the mapping logic from your server
-    const fieldMappings = {
-      'question_0': 'How did you hear about us',
-      'question_1': 'Business/Industry',
-      'question_2': 'Main product', 
-      'question_3': 'Running ads',
-      'question_4': 'Using CRM',
-      'question_5': 'Pain points'
-    };
-    
-    const formattedDiscoveryData = {};
-    
-    Object.entries(rawDiscoveryData).forEach(([key, value]) => {
-      if (key.startsWith('question_')) {
-        if (fieldMappings[key]) {
-          formattedDiscoveryData[fieldMappings[key]] = value;
-        } else {
-          formattedDiscoveryData[key] = value;
-        }
-      } else {
-        formattedDiscoveryData[key] = value;
-      }
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Discovery data mapping test completed',
-      raw_input: rawDiscoveryData,
-      formatted_output: formattedDiscoveryData,
-      field_mappings: fieldMappings
-    });
-    
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Test endpoint for Retell API using the SDK
-app.get('/test-retell-api', async (req, res) => {
-  try {
-    // First try with SDK
-    if (retellClient) {
-      try {
-        const agents = await retellClient.agent.list();
-        
-        return res.status(200).json({
-          success: true,
-          message: 'Successfully connected to Retell API using SDK',
-          agents_count: agents.agents?.length || 0,
-          method: 'sdk'
-        });
-      } catch (sdkError) {
-        console.error('❌ SDK Error connecting to Retell API:', sdkError);
-        // Fall through to axios fallback
-      }
-    }
-    
-    // Fallback to axios
-    if (!process.env.RETELL_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "Missing RETELL_API_KEY environment variable"
-      });
-    }
-    
-    const response = await axios.get('https://api.retellai.com/v1/agents', {
-      headers: {
-        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Successfully connected to Retell API using axios',
-      agents_count: response.data.agents?.length || 0,
-      method: 'axios'
-    });
-  } catch (error) {
-    console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
-    
-    res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message
-    });
-  }
-});
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Trigger server running on port ${PORT}`);
-});
       message: success ? 'Test webhook sent successfully' : 'Failed to send test webhook',
       data: testData
     });
@@ -1297,3 +871,429 @@ app.post('/manual-webhook', async (req, res) => {
     
     res.status(200).json({
       success,
+      message: success ? "Webhook sent successfully" : "Failed to send webhook",
+      data: webhookData
+    });
+  } catch (error) {
+    console.error('❌ Error in manual-webhook endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Enhanced debug endpoint for testing the complete workflow
+app.post('/debug-test-webhook', async (req, res) => {
+  try {
+    console.log('🧪 DEBUG TEST WEBHOOK TRIGGERED');
+    
+    // Use provided data or default test data
+    const testData = {
+      name: req.body.name || "Jaden Test",
+      email: req.body.email || "jadenlugoco@gmail.com", 
+      phone: req.body.phone || "+12099387088",
+      preferredDay: req.body.preferredDay || "Monday",
+      call_id: req.body.call_id || `test_call_${Date.now()}`,
+      schedulingComplete: true,
+      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min",
+      
+      // Complete discovery data for testing
+      discovery_data: req.body.discovery_data || {
+        "How did you hear about us": "Instagram",
+        "Business/Industry": "Solar",
+        "Main product": "Solar panels", 
+        "Running ads": "No",
+        "Using CRM": "Yes. Go high level",
+        "Pain points": "I'm not following up the leads quickly enough"
+      }
+    };
+    
+    console.log('🧪 Sending test data to n8n webhook:', JSON.stringify(testData, null, 2));
+    
+    // Send to n8n webhook
+    const success = await notifyN8nWebhook(testData);
+    
+    if (success) {
+      res.status(200).json({
+        success: true,
+        message: 'Debug test webhook sent successfully to n8n',
+        data: testData,
+        webhook_url: DEFAULT_N8N_WEBHOOK_URL
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send debug test webhook to n8n',
+        data: testData
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error in debug test webhook:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Debug test webhook failed'
+    });
+  }
+});
+
+// Quick GET endpoint for easy browser testing
+app.get('/debug-test-webhook', async (req, res) => {
+  try {
+    console.log('🧪 DEBUG TEST WEBHOOK TRIGGERED (GET)');
+    
+    // Use query parameters or defaults
+    const testData = {
+      name: req.query.name || "Jaden Test Browser",
+      email: req.query.email || "jadenlugoco@gmail.com",
+      phone: req.query.phone || "+12099387088", 
+      preferredDay: req.query.day || "Tuesday",
+      call_id: `browser_test_${Date.now()}`,
+      schedulingComplete: true,
+      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min",
+      
+      // Complete discovery data
+      discovery_data: {
+        "How did you hear about us": req.query.source || "Instagram",
+        "Business/Industry": req.query.industry || "Solar",
+        "Main product": req.query.product || "Solar panels",
+        "Running ads": req.query.ads || "No", 
+        "Using CRM": req.query.crm || "Yes. Go high level",
+        "Pain points": req.query.pain || "Not following up leads quickly enough"
+      }
+    };
+    
+    console.log('🧪 Browser test - sending to n8n:', JSON.stringify(testData, null, 2));
+    
+    const success = await notifyN8nWebhook(testData);
+    
+    res.status(200).send(`
+      <html>
+        <head><title>Debug Test Results</title></head>
+        <body style="font-family: Arial; padding: 20px;">
+          <h2>🧪 Debug Test Webhook Results</h2>
+          <p><strong>Status:</strong> ${success ? '✅ SUCCESS' : '❌ FAILED'}</p>
+          <p><strong>Webhook URL:</strong> ${DEFAULT_N8N_WEBHOOK_URL}</p>
+          <h3>Test Data Sent:</h3>
+          <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px;">${JSON.stringify(testData, null, 2)}</pre>
+          
+          <h3>Quick Test Links:</h3>
+          <ul>
+            <li><a href="/debug-test-webhook?name=John&email=john@test.com&industry=Real Estate&product=Houses">Real Estate Test</a></li>
+            <li><a href="/debug-test-webhook?name=Sarah&email=sarah@test.com&industry=E-commerce&product=Clothing">E-commerce Test</a></li>
+            <li><a href="/debug-test-webhook?name=Mike&email=mike@test.com&industry=SaaS&product=Software">SaaS Test</a></li>
+          </ul>
+          
+          <p><a href="/debug-test-webhook">🔄 Run Another Test</a></p>
+        </body>
+      </html>
+    `);
+    
+  } catch (error) {
+    console.error('❌ Error in browser debug test:', error);
+    res.status(500).send(`
+      <html>
+        <body style="font-family: Arial; padding: 20px;">
+          <h2>❌ Debug Test Failed</h2>
+          <p><strong>Error:</strong> ${error.message}</p>
+          <p><a href="/debug-test-webhook">🔄 Try Again</a></p>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// Test endpoint specifically for the N8N discovery flow
+app.get('/test-n8n-flow', async (req, res) => {
+  try {
+    console.log('🧪 TESTING N8N DISCOVERY FLOW');
+    
+    // Use query parameters or defaults for easy browser testing
+    const testData = {
+      name: req.query.name || "Discovery Test User",
+      email: req.query.email || "discoverytest@example.com",
+      phone: req.query.phone || "+1555123456",
+      preferredDay: req.query.day || "Friday", 
+      call_id: `n8n_test_${Date.now()}`,
+      schedulingComplete: true,
+      
+      // Complete discovery data with all 6 answers
+      discovery_data: {
+        "How did you hear about us": req.query.source || "LinkedIn",
+        "Business/Industry": req.query.industry || "Digital Marketing",
+        "Main product": req.query.product || "Marketing Software", 
+        "Running ads": req.query.ads || "Yes, Meta and Google",
+        "Using CRM": req.query.crm || "Yes, HubSpot",
+        "Pain points": req.query.pain || "Lead attribution is unclear"
+      }
+    };
+    
+    console.log('📤 Sending test data directly to N8N webhook:', JSON.stringify(testData, null, 2));
+    
+    // Send directly to N8N webhook (not through our server)
+    const n8nResponse = await axios.post('https://n8n-clp2.onrender.com/webhook/retell-scheduling', testData, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000 // 30 second timeout for N8N processing
+    });
+    
+    console.log('✅ N8N Response:', n8nResponse.data);
+    
+    // Create a nice HTML response showing what happened
+    res.status(200).send(`
+      <html>
+        <head>
+          <title>N8N Discovery Flow Test</title>
+          <style>
+            body { font-family: Arial; padding: 20px; max-width: 800px; }
+            .success { color: green; }
+            .data-box { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0; }
+            .discovery-item { margin: 5px 0; padding: 5px; background: #e8f4fd; border-radius: 3px; }
+            .test-links { margin: 20px 0; }
+            .test-links a { display: inline-block; margin: 5px; padding: 8px 15px; background: #007cba; color: white; text-decoration: none; border-radius: 4px; }
+          </style>
+        </head>
+        <body>
+          <h2>🧪 N8N Discovery Flow Test Results</h2>
+          <p class="success"><strong>✅ SUCCESS!</strong> Data sent to N8N workflow</p>
+          
+          <h3>📧 Contact Info Sent:</h3>
+          <div class="data-box">
+            <strong>Name:</strong> ${testData.name}<br>
+            <strong>Email:</strong> ${testData.email}<br>
+            <strong>Phone:</strong> ${testData.phone}<br>
+            <strong>Preferred Day:</strong> ${testData.preferredDay}
+          </div>
+          
+          <h3>🔍 Discovery Answers Sent:</h3>
+          <div class="data-box">
+            ${Object.entries(testData.discovery_data).map(([question, answer]) => 
+              `<div class="discovery-item"><strong>${question}:</strong> ${answer}</div>`
+            ).join('')}
+          </div>
+          
+          <h3>🎯 What Should Happen Next:</h3>
+          <ol>
+            <li>N8N should process this data through the "Code" node</li>
+            <li>Create/update record in "Email Log" Airtable</li>
+            <li>Check if email already sent</li>
+            <li>Generate Calendly link</li>
+            <li>Send email with booking link</li>
+            <li>Update Email Log with discovery data</li>
+          </ol>
+          
+          <div class="test-links">
+            <h3>🔄 Try Different Test Scenarios:</h3>
+            <a href="/test-n8n-flow?name=Solar Sam&email=sam@solar.com&industry=Solar&product=Panels&ads=No&crm=GoHighLevel&pain=Follow up issues">Solar Industry</a>
+            <a href="/test-n8n-flow?name=Tech Tim&email=tim@tech.com&industry=SaaS&product=Software&ads=Yes&crm=Salesforce&pain=Lead quality">SaaS Company</a>
+            <a href="/test-n8n-flow?name=Real Estate Rita&email=rita@realty.com&industry=Real Estate&product=Houses&ads=Yes&crm=No&pain=Market competition">Real Estate</a>
+            <a href="/test-n8n-flow?name=Agency Alice&email=alice@agency.com&industry=Marketing&product=Services&ads=Yes&crm=HubSpot&pain=Client retention">Marketing Agency</a>
+          </div>
+          
+          <h3>📊 Check Results In:</h3>
+          <ul>
+            <li><strong>Airtable Email Log:</strong> Should have new record with discovery data</li>
+            <li><strong>Email:</strong> ${testData.email} should receive booking link</li>
+            <li><strong>N8N Logs:</strong> Check your N8N workflow execution logs</li>
+          </ul>
+          
+          <p><strong>N8N Response:</strong></p>
+          <div class="data-box">
+            <pre>${JSON.stringify(n8nResponse.data, null, 2)}</pre>
+          </div>
+          
+          <p><a href="/test-n8n-flow">🔄 Run Another Test</a></p>
+        </body>
+      </html>
+    `);
+    
+  } catch (error) {
+    console.error('❌ Error testing N8N flow:', error);
+    
+    res.status(500).send(`
+      <html>
+        <body style="font-family: Arial; padding: 20px;">
+          <h2>❌ N8N Flow Test Failed</h2>
+          <p><strong>Error:</strong> ${error.message}</p>
+          
+          ${error.response ? `
+            <h3>N8N Response Details:</h3>
+            <pre style="background: #ffe6e6; padding: 10px; border-radius: 5px;">
+Status: ${error.response.status}
+Data: ${JSON.stringify(error.response.data, null, 2)}
+            </pre>
+          ` : ''}
+          
+          <p><strong>Possible Issues:</strong></p>
+          <ul>
+            <li>N8N webhook might be down</li>
+            <li>Airtable credentials might be expired</li>
+            <li>Email SMTP settings might be incorrect</li>
+            <li>Workflow might be paused</li>
+          </ul>
+          
+          <p><a href="/test-n8n-flow">🔄 Try Again</a></p>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// POST version for API testing
+app.post('/test-n8n-flow', async (req, res) => {
+  try {
+    const testData = {
+      name: req.body.name || "API Test User",
+      email: req.body.email || "apitest@example.com", 
+      phone: req.body.phone || "+1555999888",
+      preferredDay: req.body.preferredDay || "Thursday",
+      call_id: req.body.call_id || `api_test_${Date.now()}`,
+      schedulingComplete: true,
+      discovery_data: req.body.discovery_data || {
+        "How did you hear about us": "API Test",
+        "Business/Industry": "Testing",
+        "Main product": "Test Products",
+        "Running ads": "Maybe",
+        "Using CRM": "Test CRM",
+        "Pain points": "Testing pain points"
+      }
+    };
+    
+    console.log('📤 API Test - sending to N8N:', JSON.stringify(testData, null, 2));
+    
+    const n8nResponse = await axios.post('https://n8n-clp2.onrender.com/webhook/retell-scheduling', testData, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Successfully sent test data to N8N workflow',
+      test_data: testData,
+      n8n_response: n8nResponse.data,
+      instructions: {
+        check_airtable: "Look for new record in Email Log table",
+        check_email: `Email should be sent to ${testData.email}`,
+        check_n8n: "Review N8N workflow execution logs"
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ API test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      n8n_response: error.response?.data || null
+    });
+  }
+});
+
+// Endpoint to test just the discovery data mapping
+app.post('/debug-discovery-mapping', async (req, res) => {
+  try {
+    console.log('🔍 TESTING DISCOVERY DATA MAPPING');
+    
+    const rawDiscoveryData = req.body.discovery_data || {
+      "question_0": "Instagram",
+      "question_1": "Solar", 
+      "question_2": "Solar panels",
+      "question_3": "No",
+      "question_4": "Yes. Go high level", 
+      "question_5": "Not following up leads quickly"
+    };
+    
+    // Test the mapping logic from your server
+    const fieldMappings = {
+      'question_0': 'How did you hear about us',
+      'question_1': 'Business/Industry',
+      'question_2': 'Main product', 
+      'question_3': 'Running ads',
+      'question_4': 'Using CRM',
+      'question_5': 'Pain points'
+    };
+    
+    const formattedDiscoveryData = {};
+    
+    Object.entries(rawDiscoveryData).forEach(([key, value]) => {
+      if (key.startsWith('question_')) {
+        if (fieldMappings[key]) {
+          formattedDiscoveryData[fieldMappings[key]] = value;
+        } else {
+          formattedDiscoveryData[key] = value;
+        }
+      } else {
+        formattedDiscoveryData[key] = value;
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Discovery data mapping test completed',
+      raw_input: rawDiscoveryData,
+      formatted_output: formattedDiscoveryData,
+      field_mappings: fieldMappings
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test endpoint for Retell API using the SDK
+app.get('/test-retell-api', async (req, res) => {
+  try {
+    // First try with SDK
+    if (retellClient) {
+      try {
+        const agents = await retellClient.agent.list();
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Successfully connected to Retell API using SDK',
+          agents_count: agents.agents?.length || 0,
+          method: 'sdk'
+        });
+      } catch (sdkError) {
+        console.error('❌ SDK Error connecting to Retell API:', sdkError);
+        // Fall through to axios fallback
+      }
+    }
+    
+    // Fallback to axios
+    if (!process.env.RETELL_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: "Missing RETELL_API_KEY environment variable"
+      });
+    }
+    
+    const response = await axios.get('https://api.retellai.com/v1/agents', {
+      headers: {
+        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Successfully connected to Retell API using axios',
+      agents_count: response.data.agents?.length || 0,
+      method: 'axios'
+    });
+  } catch (error) {
+    console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🚀 Trigger server running on port ${PORT}`);
+});
