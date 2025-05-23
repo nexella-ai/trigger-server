@@ -76,7 +76,7 @@ async function notifyN8nWebhook(data) {
       // Map discovery questions to better field names
       const questionMapping = {
         'question_0': 'How did you hear about us',
-        'question_1': 'Business or industry',
+        'question_1': 'Business/Industry',
         'question_2': 'Main product',
         'question_3': 'Running ads',
         'question_4': 'Using CRM',
@@ -321,7 +321,7 @@ app.post('/release-slot', (req, res) => {
   }
 });
 
-// Updated endpoint to trigger a Retell call using SDK
+// FIXED: Updated endpoint to trigger a Retell call using SDK with enhanced call storage
 app.post('/trigger-retell-call', async (req, res) => {
   try {
     const { name, email, phone, userId } = req.body;
@@ -335,6 +335,9 @@ app.post('/trigger-retell-call', async (req, res) => {
     
     console.log('Triggering Retell call with:', { name, email, phone });
     
+    // Create a unique user ID
+    const userIdentifier = userId || `user_${phone}`;
+    
     // First try using the SDK
     if (retellClient) {
       try {
@@ -344,33 +347,39 @@ app.post('/trigger-retell-call', async (req, res) => {
           agent_id: process.env.RETELL_AGENT_ID,
           metadata: {
             customer_name: name || "",
-            customer_email: email || "",
-            user_id: userId || `user_${Date.now()}`,
+            customer_email: email || "", // ← CRITICAL: This must be passed
+            user_id: userIdentifier,
             needs_scheduling: true,
             call_source: "website_form",
-            // Updated for n8n
             n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
           },
-          // New: Add a callback URL for the agent to trigger when scheduling is complete
           webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
           webhook_events: ["call_ended", "call_analyzed"]
         });
         
-        // Store the call in our active calls map
+        // Store the call in our active calls map WITH COMPLETE INFO
         const callId = response.call_id;
         activeCalls.set(callId, {
           id: callId,
           phone,
-          name,
-          email,
-          userId: userId || `user_${Date.now()}`,
+          name: name || "",
+          email: email || "", // ← CRITICAL: Store email here
+          userId: userIdentifier,
           startTime: Date.now(),
           state: 'initiated',
           discoveryComplete: false,
-          schedulingComplete: false
+          schedulingComplete: false,
+          // Store metadata for easy access
+          metadata: {
+            customer_name: name || "",
+            customer_email: email || "",
+            user_id: userIdentifier
+          }
         });
         
         console.log('✅ Retell outbound call initiated with SDK:', response);
+        console.log('✅ Stored call data with email:', email);
+        
         return res.status(200).json({
           success: true,
           message: 'Outbound call initiated successfully',
@@ -390,11 +399,10 @@ app.post('/trigger-retell-call', async (req, res) => {
         agent_id: process.env.RETELL_AGENT_ID,
         metadata: {
           customer_name: name || "",
-          customer_email: email || "",
-          user_id: userId || `user_${Date.now()}`,
+          customer_email: email || "", // ← CRITICAL: This must be passed
+          user_id: userIdentifier,
           needs_scheduling: true,
           call_source: "website_form",
-          // Updated for n8n
           n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
         },
         webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
@@ -406,21 +414,29 @@ app.post('/trigger-retell-call', async (req, res) => {
         }
       });
       
-      // Store the call in our active calls map
+      // Store the call in our active calls map WITH COMPLETE INFO
       const callId = response.data.call_id;
       activeCalls.set(callId, {
         id: callId,
         phone,
-        name,
-        email,
-        userId: userId || `user_${Date.now()}`,
+        name: name || "",
+        email: email || "", // ← CRITICAL: Store email here
+        userId: userIdentifier,
         startTime: Date.now(),
         state: 'initiated',
         discoveryComplete: false,
-        schedulingComplete: false
+        schedulingComplete: false,
+        // Store metadata for easy access
+        metadata: {
+          customer_name: name || "",
+          customer_email: email || "",
+          user_id: userIdentifier
+        }
       });
       
       console.log('✅ Retell outbound call initiated with axios:', response.data);
+      console.log('✅ Stored call data with email:', email);
+      
       return res.status(200).json({
         success: true,
         message: 'Outbound call initiated successfully',
@@ -817,6 +833,43 @@ app.post('/update-conversation', express.json(), async (req, res) => {
   } catch (error) {
     console.error('Error updating conversation:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// FIXED: Enhanced get-call-info endpoint
+app.get('/get-call-info/:callId', (req, res) => {
+  try {
+    const { callId } = req.params;
+    console.log(`📞 Server LLM requesting call info for: ${callId}`);
+    
+    // Check if we have this call in our active calls
+    if (activeCalls.has(callId)) {
+      const callData = activeCalls.get(callId);
+      console.log(`✅ Found call data:`, callData);
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          name: callData.name || '',
+          email: callData.email || '', // ← CRITICAL: Return the email
+          phone: callData.phone || '',
+          call_id: callId,
+          metadata: callData.metadata || {}
+        }
+      });
+    } else {
+      console.log(`⚠️ Call ${callId} not found in active calls`);
+      res.status(404).json({
+        success: false,
+        error: 'Call not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error getting call info:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
@@ -1289,42 +1342,6 @@ app.get('/test-retell-api', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.response?.data || error.message
-    });
-  }
-});
-
-// Get call information endpoint for Server LLM
-app.get('/get-call-info/:callId', (req, res) => {
-  try {
-    const { callId } = req.params;
-    console.log(`📞 Server LLM requesting call info for: ${callId}`);
-    
-    // Check if we have this call in our active calls
-    if (activeCalls.has(callId)) {
-      const callData = activeCalls.get(callId);
-      console.log(`✅ Found call data:`, callData);
-      
-      res.status(200).json({
-        success: true,
-        data: {
-          name: callData.name || '',
-          email: callData.email || '',
-          phone: callData.phone || '',
-          call_id: callId
-        }
-      });
-    } else {
-      console.log(`⚠️ Call ${callId} not found in active calls`);
-      res.status(404).json({
-        success: false,
-        error: 'Call not found'
-      });
-    }
-  } catch (error) {
-    console.error('Error getting call info:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
     });
   }
 });
