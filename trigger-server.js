@@ -1293,6 +1293,42 @@ app.get('/test-retell-api', async (req, res) => {
   }
 });
 
+// Get call information endpoint for Server LLM
+app.get('/get-call-info/:callId', (req, res) => {
+  try {
+    const { callId } = req.params;
+    console.log(`📞 Server LLM requesting call info for: ${callId}`);
+    
+    // Check if we have this call in our active calls
+    if (activeCalls.has(callId)) {
+      const callData = activeCalls.get(callId);
+      console.log(`✅ Found call data:`, callData);
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          name: callData.name || '',
+          email: callData.email || '',
+          phone: callData.phone || '',
+          call_id: callId
+        }
+      });
+    } else {
+      console.log(`⚠️ Call ${callId} not found in active calls`);
+      res.status(404).json({
+        success: false,
+        error: 'Call not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error getting call info:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Trigger server running on port ${PORT}`);
