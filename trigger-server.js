@@ -1,17 +1,15 @@
+// Updated trigger-server.js with Google Calendar integration
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const Retell = require('retell-sdk').default;
-const { 
-  lockSlot, 
-  confirmSlot, 
-  releaseSlot, 
-  isSlotAvailable, 
-  getAvailableSlots 
-} = require('./slot-manager');
+const GoogleCalendarService = require('./google-calendar-service'); // NEW: Import Google Calendar service
 
 const app = express();
 app.use(express.json());
+
+// Initialize Google Calendar service
+const calendarService = new GoogleCalendarService();
 
 // Set the default n8n webhook URL - UPDATED FOR N8N
 const DEFAULT_N8N_WEBHOOK_URL = 'https://n8n-clp2.onrender.com/webhook/retell-scheduling';
@@ -63,7 +61,7 @@ function parseDate(dateStr) {
   }
 }
 
-// Enhanced helper function to send data to n8n webhook - UPDATED FOR N8N
+// Enhanced helper function to send data to n8n webhook with Google Calendar data
 async function notifyN8nWebhook(data) {
   console.log('🚀 PREPARING TO SEND DATA TO N8N WEBHOOK:', JSON.stringify(data, null, 2));
   
@@ -111,7 +109,10 @@ async function notifyN8nWebhook(data) {
     const webhookData = {
       ...data,
       timestamp: new Date().toISOString(),
-      webhook_version: '1.1'
+      webhook_version: '1.2', // Updated version for Google Calendar
+      // NEW: Google Calendar specific fields
+      calendar_platform: 'google',
+      booking_method: data.calendar_booking ? 'automatic' : 'manual'
     };
     
     console.log('📤 SENDING DATA TO N8N WEBHOOK:', JSON.stringify(webhookData, null, 2));
@@ -120,7 +121,8 @@ async function notifyN8nWebhook(data) {
       timeout: 10000, // 10 second timeout
       headers: {
         'Content-Type': 'application/json',
-        'X-Webhook-Source': 'Nexella-Server'
+        'X-Webhook-Source': 'Nexella-Server',
+        'X-Calendar-Platform': 'google'
       }
     });
     
@@ -179,41 +181,10 @@ const activeCalls = new Map();
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).send('Trigger server is healthy.');
+  res.status(200).send('Trigger server is healthy with Google Calendar integration.');
 });
 
-// Test endpoint to directly send a webhook to n8n
-app.get('/test-webhook', async (req, res) => {
-  try {
-    const testData = {
-      name: "Test User",
-      email: "test@example.com",
-      phone: "+12345678900",
-      call_id: "test123",
-      schedulingComplete: true,
-      preferredDay: "Monday",
-      schedulingLink: "https://calendly.com/nexella/30min"
-    };
-    
-    console.log('Sending valid webhook test data:', testData);
-    
-    const success = await notifyN8nWebhook(testData);
-    
-    res.status(200).json({
-      success,
-      message: success ? 'Test webhook sent successfully' : 'Failed to send test webhook',
-      data: testData
-    });
-  } catch (error) {
-    console.error('Error in test-webhook endpoint:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Endpoint to check slot availability
+// NEW: Endpoint to check Google Calendar availability
 app.get('/check-availability', async (req, res) => {
   try {
     const { startTime, endTime } = req.query;
@@ -225,11 +196,12 @@ app.get('/check-availability', async (req, res) => {
       });
     }
 
-    const available = await isSlotAvailable(startTime, endTime);
+    const available = await calendarService.isSlotAvailable(startTime, endTime);
 
     res.status(200).json({
       success: true,
-      available
+      available,
+      platform: 'google_calendar'
     });
   } catch (error) {
     console.error('Error checking availability:', error.message);
@@ -240,7 +212,7 @@ app.get('/check-availability', async (req, res) => {
   }
 });
 
-// Endpoint to get available slots for a date
+// NEW: Endpoint to get available slots from Google Calendar
 app.get('/available-slots', async (req, res) => {
   try {
     const { date } = req.query;
@@ -252,11 +224,13 @@ app.get('/available-slots', async (req, res) => {
       });
     }
 
-    const availableSlots = await getAvailableSlots(date);
+    const availableSlots = await calendarService.getAvailableSlots(date);
 
     res.status(200).json({
       success: true,
-      availableSlots
+      availableSlots,
+      platform: 'google_calendar',
+      date: date
     });
   } catch (error) {
     console.error('Error getting available slots:', error.message);
@@ -267,26 +241,40 @@ app.get('/available-slots', async (req, res) => {
   }
 });
 
-// Endpoint to lock a slot
-app.post('/lock-slot', (req, res) => {
+// NEW: Endpoint to create Google Calendar event
+app.post('/create-calendar-event', async (req, res) => {
   try {
-    const { startTime, endTime, userId } = req.body;
+    const { 
+      summary = 'Nexella AI Consultation',
+      description = '',
+      startTime,
+      endTime,
+      attendeeEmail,
+      attendeeName = 'Guest'
+    } = req.body;
 
-    if (!startTime || !userId) {
+    if (!startTime || !endTime || !attendeeEmail) {
       return res.status(400).json({ 
         success: false, 
-        error: "Missing required fields" 
+        error: "Missing required fields: startTime, endTime, attendeeEmail" 
       });
     }
 
-    const success = lockSlot(startTime, userId);
+    const result = await calendarService.createEvent({
+      summary,
+      description,
+      startTime,
+      endTime,
+      attendeeEmail,
+      attendeeName
+    });
 
-    res.status(success ? 200 : 409).json({
-      success,
-      message: success ? "Slot locked successfully" : "Slot is already locked"
+    res.status(result.success ? 200 : 500).json({
+      ...result,
+      platform: 'google_calendar'
     });
   } catch (error) {
-    console.error('Error locking slot:', error.message);
+    console.error('Error creating calendar event:', error.message);
     res.status(500).json({
       success: false,
       error: error.message
@@ -294,26 +282,36 @@ app.post('/lock-slot', (req, res) => {
   }
 });
 
-// Endpoint to release a slot
-app.post('/release-slot', (req, res) => {
+// Test endpoint to directly send a webhook to n8n with Google Calendar data
+app.get('/test-webhook', async (req, res) => {
   try {
-    const { startTime, userId } = req.body;
-
-    if (!startTime || !userId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "Missing required fields" 
-      });
-    }
-
-    const success = releaseSlot(startTime, userId);
-
-    res.status(success ? 200 : 404).json({
+    const testData = {
+      name: "Test User",
+      email: "test@example.com",
+      phone: "+12345678900",
+      call_id: "test123",
+      schedulingComplete: true,
+      preferredDay: "Monday",
+      // NEW: Google Calendar specific test data
+      calendar_booking: true,
+      meeting_link: "https://meet.google.com/test-meeting",
+      event_link: "https://calendar.google.com/test-event",
+      event_id: "test_event_123",
+      scheduled_time: new Date().toISOString()
+    };
+    
+    console.log('Sending test webhook with Google Calendar data:', testData);
+    
+    const success = await notifyN8nWebhook(testData);
+    
+    res.status(200).json({
       success,
-      message: success ? "Slot released successfully" : "No matching lock found"
+      message: success ? 'Test webhook sent successfully' : 'Failed to send test webhook',
+      data: testData,
+      platform: 'google_calendar'
     });
   } catch (error) {
-    console.error('Error releasing slot:', error.message);
+    console.error('Error in test-webhook endpoint:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -351,7 +349,8 @@ app.post('/trigger-retell-call', async (req, res) => {
             user_id: userIdentifier,
             needs_scheduling: true,
             call_source: "website_form",
-            n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
+            n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL,
+            calendar_platform: "google" // NEW: Indicate we're using Google Calendar
           },
           webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
           webhook_events: ["call_ended", "call_analyzed"]
@@ -369,11 +368,13 @@ app.post('/trigger-retell-call', async (req, res) => {
           state: 'initiated',
           discoveryComplete: false,
           schedulingComplete: false,
+          calendarPlatform: 'google', // NEW: Track calendar platform
           // Store metadata for easy access
           metadata: {
             customer_name: name || "",
             customer_email: email || "",
-            user_id: userIdentifier
+            user_id: userIdentifier,
+            calendar_platform: "google"
           }
         });
         
@@ -383,7 +384,8 @@ app.post('/trigger-retell-call', async (req, res) => {
         return res.status(200).json({
           success: true,
           message: 'Outbound call initiated successfully',
-          call_id: response.call_id
+          call_id: response.call_id,
+          calendar_platform: 'google'
         });
       } catch (sdkError) {
         console.error('❌ SDK Error initiating Retell call:', sdkError);
@@ -403,7 +405,8 @@ app.post('/trigger-retell-call', async (req, res) => {
           user_id: userIdentifier,
           needs_scheduling: true,
           call_source: "website_form",
-          n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL
+          n8n_webhook_url: DEFAULT_N8N_WEBHOOK_URL,
+          calendar_platform: "google" // NEW: Indicate we're using Google Calendar
         },
         webhook_url: `${process.env.SERVER_URL || 'https://trigger-server-qt7u.onrender.com'}/retell-webhook`,
         webhook_events: ["call_ended", "call_analyzed"]
@@ -426,11 +429,13 @@ app.post('/trigger-retell-call', async (req, res) => {
         state: 'initiated',
         discoveryComplete: false,
         schedulingComplete: false,
+        calendarPlatform: 'google', // NEW: Track calendar platform
         // Store metadata for easy access
         metadata: {
           customer_name: name || "",
           customer_email: email || "",
-          user_id: userIdentifier
+          user_id: userIdentifier,
+          calendar_platform: "google"
         }
       });
       
@@ -440,7 +445,8 @@ app.post('/trigger-retell-call', async (req, res) => {
       return res.status(200).json({
         success: true,
         message: 'Outbound call initiated successfully',
-        call_id: response.data.call_id
+        call_id: response.data.call_id,
+        calendar_platform: 'google'
       });
     } catch (error) {
       console.error('❌ Error initiating Retell call:', error.response?.data || error.message);
@@ -458,74 +464,7 @@ app.post('/trigger-retell-call', async (req, res) => {
   }
 });
 
-// NEW: Modified endpoint for sending scheduling link using n8n
-app.post('/send-scheduling-link', async (req, res) => {
-  try {
-    const { 
-      call_id, 
-      name, 
-      email, 
-      phone, 
-      preferredDay,
-      userId
-    } = req.body;
-    
-    console.log('Received scheduling link request:', { 
-      call_id, name, email, phone, preferredDay
-    });
-    
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing email address for scheduling link"
-      });
-    }
-    
-    // Get the Calendly scheduling link from env or config
-    const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
-    
-    // Check if call record exists and update it
-    if (call_id) {
-      const callRecord = activeCalls.get(call_id);
-      if (callRecord) {
-        callRecord.schedulingComplete = true;
-        callRecord.state = 'scheduling_link_sent';
-        callRecord.preferredDay = preferredDay;
-        activeCalls.set(call_id, callRecord);
-      }
-    }
-    
-    // Prepare webhook data with scheduling link
-    const webhookData = {
-      name,
-      email,
-      phone,
-      preferredDay: preferredDay || '',
-      schedulingLink, // This is the key field - sending a link instead of booking directly
-      call_id,
-      schedulingComplete: true
-    };
-    
-    console.log('📤 Sending webhook notification with scheduling link details:', webhookData);
-    // Updated to use the n8n webhook function
-    const webhookSent = await notifyN8nWebhook(webhookData);
-    
-    res.status(200).json({
-      success: true,
-      message: 'Scheduling link will be sent via email',
-      schedulingLink,
-      webhookNotified: webhookSent
-    });
-  } catch (error) {
-    console.error('❌ Error in send-scheduling-link endpoint:', error);
-    res.status(500).json({
-      success: false,
-      error: "Internal server error"
-    });
-  }
-});
-
-// Modified: Endpoint for handling preferred scheduling and sending links
+// UPDATED: Modified endpoint for processing scheduling with Google Calendar
 app.post('/process-scheduling-preference', async (req, res) => {
   try {
     const { 
@@ -535,12 +474,19 @@ app.post('/process-scheduling-preference', async (req, res) => {
       preferredDay,
       userId, 
       call_id,
-      discovery_data
+      discovery_data,
+      // NEW: Google Calendar specific fields
+      calendar_booking,
+      meeting_link,
+      event_link,
+      event_id,
+      scheduled_time
     } = req.body;
 
     console.log('Received scheduling preference:', { 
       name, email, phone, preferredDay, userId, call_id,
-      discovery_data: discovery_data ? 'Present' : 'Not present'
+      discovery_data: discovery_data ? 'Present' : 'Not present',
+      calendar_booking: calendar_booking || false
     });
 
     if (!email) {
@@ -550,19 +496,23 @@ app.post('/process-scheduling-preference', async (req, res) => {
       });
     }
 
-    // Get the Calendly scheduling link
-    const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
-    
     // Update call record if this is associated with a call
     if (call_id && activeCalls.has(call_id)) {
       const callRecord = activeCalls.get(call_id);
       callRecord.schedulingComplete = true;
       callRecord.preferredDay = preferredDay;
+      callRecord.calendarBooked = calendar_booking || false;
       
       // Store discovery data if present
       if (discovery_data) {
         callRecord.discoveryData = discovery_data;
       }
+      
+      // NEW: Store Google Calendar specific data
+      if (meeting_link) callRecord.meetingLink = meeting_link;
+      if (event_link) callRecord.eventLink = event_link;
+      if (event_id) callRecord.eventId = event_id;
+      if (scheduled_time) callRecord.scheduledTime = scheduled_time;
       
       activeCalls.set(call_id, callRecord);
     }
@@ -570,27 +520,37 @@ app.post('/process-scheduling-preference', async (req, res) => {
     // Format day string for display
     const formattedDay = preferredDay || 'preferred day';
 
-    // Prepare webhook data
+    // Prepare webhook data with Google Calendar fields
     const webhookData = {
       name,
       email,
       phone,
       preferredDay: formattedDay,
-      schedulingLink,
       call_id,
       schedulingComplete: true,
-      discovery_data: discovery_data || {}
+      discovery_data: discovery_data || {},
+      // NEW: Google Calendar specific fields
+      calendar_platform: 'google',
+      calendar_booking: calendar_booking || false,
+      meeting_link: meeting_link || '',
+      event_link: event_link || '',
+      event_id: event_id || '',
+      scheduled_time: scheduled_time || '',
+      booking_method: calendar_booking ? 'automatic' : 'manual'
     };
     
     // Log and send webhook data
-    console.log('📤 Sending n8n webhook for scheduling preference:', webhookData);
-    // Updated to use the n8n webhook function
+    console.log('📤 Sending n8n webhook for scheduling preference with Google Calendar data:', webhookData);
     const webhookSent = await notifyN8nWebhook(webhookData);
 
     res.status(200).json({
       success: true,
-      message: 'Scheduling preferences processed and link will be sent',
-      schedulingLink,
+      message: calendar_booking ? 
+        'Google Calendar event created and preferences processed' : 
+        'Scheduling preferences processed, manual booking needed',
+      calendar_platform: 'google',
+      calendar_booking: calendar_booking || false,
+      meeting_link: meeting_link || '',
       webhookSent,
       preferredDay: formattedDay,
       discovery_data_received: !!discovery_data
@@ -604,7 +564,7 @@ app.post('/process-scheduling-preference', async (req, res) => {
   }
 });
 
-// IMPROVED: Enhanced webhook endpoint for receiving events from Retell
+// IMPROVED: Enhanced webhook endpoint for receiving events from Retell with Google Calendar
 app.post('/retell-webhook', express.json(), async (req, res) => {
   try {
     const { event, call } = req.body;
@@ -712,24 +672,24 @@ app.post('/retell-webhook', express.json(), async (req, res) => {
             console.log('Extracted Q&A from transcript:', enhancedDiscoveryData);
           }
           
-          // Get the Calendly scheduling link
-          const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
-          
-          // Send webhook to n8n
+          // Send webhook to n8n with Google Calendar platform info
           await notifyN8nWebhook({
             name,
             email,
             phone,
             call_id: call.call_id,
             preferredDay: preferredDay || 'Not specified',
-            schedulingLink,
             schedulingComplete: true,
             call_status: call.call_status || 'unknown',
             call_event: event,
-            discovery_data: enhancedDiscoveryData
+            discovery_data: enhancedDiscoveryData,
+            // NEW: Google Calendar specific fields
+            calendar_platform: 'google',
+            calendar_booking: false, // Will be updated if booking occurs
+            booking_method: 'manual'
           });
           
-          console.log(`✅ Webhook sent for call ${call.call_id} event ${event}`);
+          console.log(`✅ Webhook sent for call ${call.call_id} event ${event} with Google Calendar platform`);
         } else {
           console.warn(`⚠️ No email found for call ${call.call_id}, cannot send webhook`);
         }
@@ -782,7 +742,8 @@ app.post('/update-conversation', express.json(), async (req, res) => {
           email: callRecord.email,
           phone: callRecord.phone,
           call_id,
-          discoveryComplete: true
+          discoveryComplete: true,
+          calendar_platform: 'google'
         });
       }
     }
@@ -792,20 +753,19 @@ app.post('/update-conversation', express.json(), async (req, res) => {
       callRecord.preferredDay = preferredDay;
       console.log(`Updated preferredDay for call ${call_id}: ${preferredDay}`);
       
-      // If we have a preferredDay, send scheduling data
-      const schedulingLink = process.env.CALENDLY_SCHEDULING_LINK || 'https://calendly.com/nexella/30min';
-      
+      // If we have a preferredDay, send scheduling data with Google Calendar info
       await notifyN8nWebhook({
         name: callRecord.name,
         email: callRecord.email,
         phone: callRecord.phone,
         call_id,
         preferredDay,
-        schedulingLink,
-        schedulingComplete: true
+        schedulingComplete: true,
+        calendar_platform: 'google',
+        calendar_booking: false // Will be updated when actual booking happens
       });
       
-      console.log(`Sent scheduling webhook for call ${call_id}`);
+      console.log(`Sent scheduling webhook for call ${call_id} with Google Calendar platform`);
     }
     
     // Update scheduling data if provided
@@ -819,7 +779,8 @@ app.post('/update-conversation', express.json(), async (req, res) => {
         email: callRecord.email,
         phone: callRecord.phone,
         call_id,
-        schedulingData
+        schedulingData,
+        calendar_platform: 'google'
       });
     }
     
@@ -854,6 +815,7 @@ app.get('/get-call-info/:callId', (req, res) => {
           email: callData.email || '', // ← CRITICAL: Return the email
           phone: callData.phone || '',
           call_id: callId,
+          calendar_platform: 'google', // NEW: Include calendar platform
           metadata: callData.metadata || {}
         }
       });
@@ -873,7 +835,7 @@ app.get('/get-call-info/:callId', (req, res) => {
   }
 });
 
-// Simple endpoint to manually trigger a scheduling email
+// Simple endpoint to manually trigger a scheduling email with Google Calendar data
 app.get('/manual-webhook', async (req, res) => {
   try {
     const testData = {
@@ -882,17 +844,22 @@ app.get('/manual-webhook', async (req, res) => {
       phone: req.query.phone || " 12099387088",
       schedulingComplete: true,
       preferredDay: req.query.day || "Monday",
-      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min"
+      // NEW: Google Calendar test data
+      calendar_platform: 'google',
+      calendar_booking: req.query.booked === 'true',
+      meeting_link: req.query.booked === 'true' ? 'https://meet.google.com/test-meeting' : '',
+      event_id: req.query.booked === 'true' ? 'test_event_123' : ''
     };
     
-    console.log('Sending manual webhook data:', testData);
+    console.log('Sending manual webhook data with Google Calendar:', testData);
     
     const success = await notifyN8nWebhook(testData);
     
     res.status(200).json({
       success,
       message: success ? 'Webhook sent successfully' : 'Failed to send webhook',
-      data: testData
+      data: testData,
+      platform: 'google_calendar'
     });
   } catch (error) {
     res.status(500).json({
@@ -902,67 +869,41 @@ app.get('/manual-webhook', async (req, res) => {
   }
 });
 
-// Manual webhook trigger for testing
-app.post('/manual-webhook', async (req, res) => {
-  try {
-    const webhookData = req.body;
-    
-    if (!webhookData || Object.keys(webhookData).length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing webhook data"
-      });
-    }
-    
-    // Add required fields if missing
-    if (!webhookData.schedulingComplete) {
-      webhookData.schedulingComplete = true;
-    }
-    
-    console.log('📤 Manually triggering webhook with data:', webhookData);
-    const success = await notifyN8nWebhook(webhookData);
-    
-    res.status(200).json({
-      success,
-      message: success ? "Webhook sent successfully" : "Failed to send webhook",
-      data: webhookData
-    });
-  } catch (error) {
-    console.error('❌ Error in manual-webhook endpoint:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Enhanced debug endpoint for testing the complete workflow
+// Enhanced debug endpoint for testing Google Calendar workflow
 app.post('/debug-test-webhook', async (req, res) => {
   try {
-    console.log('🧪 DEBUG TEST WEBHOOK TRIGGERED');
+    console.log('🧪 DEBUG TEST WEBHOOK TRIGGERED WITH GOOGLE CALENDAR');
     
     // Use provided data or default test data
     const testData = {
-      name: req.body.name || "Jaden Test",
-      email: req.body.email || "jadenlugoco@gmail.com", 
-      phone: req.body.phone || "+12099387088",
-      preferredDay: req.body.preferredDay || "Monday",
-      call_id: req.body.call_id || `test_call_${Date.now()}`,
+      name: req.body.name || "Google Calendar Test",
+      email: req.body.email || "gcal-test@example.com", 
+      phone: req.body.phone || "+15551234567",
+      preferredDay: req.body.preferredDay || "Tuesday",
+      call_id: req.body.call_id || `gcal_test_${Date.now()}`,
       schedulingComplete: true,
-      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min",
+      
+      // NEW: Google Calendar specific test data
+      calendar_platform: 'google',
+      calendar_booking: req.body.calendar_booking || true,
+      meeting_link: req.body.meeting_link || "https://meet.google.com/test-meeting-link",
+      event_link: req.body.event_link || "https://calendar.google.com/calendar/event?eid=test",
+      event_id: req.body.event_id || "test_event_12345",
+      scheduled_time: req.body.scheduled_time || new Date().toISOString(),
+      booking_method: 'automatic',
       
       // Complete discovery data for testing
       discovery_data: req.body.discovery_data || {
-        "How did you hear about us": "Instagram",
-        "Business/Industry": "Solar",
-        "Main product": "Solar panels", 
-        "Running ads": "No",
-        "Using CRM": "Yes. Go high level",
-        "Pain points": "I'm not following up the leads quickly enough"
+        "How did you hear about us": "Google Search",
+        "Business/Industry": "Technology", 
+        "Main product": "Software Solutions",
+        "Running ads": "Yes, Google Ads",
+        "Using CRM": "Yes, Salesforce",
+        "Pain points": "Lead management automation"
       }
     };
     
-    console.log('🧪 Sending test data to n8n webhook:', JSON.stringify(testData, null, 2));
+    console.log('🧪 Sending Google Calendar test data to n8n webhook:', JSON.stringify(testData, null, 2));
     
     // Send to n8n webhook
     const success = await notifyN8nWebhook(testData);
@@ -970,9 +911,10 @@ app.post('/debug-test-webhook', async (req, res) => {
     if (success) {
       res.status(200).json({
         success: true,
-        message: 'Debug test webhook sent successfully to n8n',
+        message: 'Debug test webhook sent successfully to n8n with Google Calendar data',
         data: testData,
-        webhook_url: DEFAULT_N8N_WEBHOOK_URL
+        webhook_url: DEFAULT_N8N_WEBHOOK_URL,
+        platform: 'google_calendar'
       });
     } else {
       res.status(500).json({
@@ -991,362 +933,34 @@ app.post('/debug-test-webhook', async (req, res) => {
   }
 });
 
-// Quick GET endpoint for easy browser testing
-app.get('/debug-test-webhook', async (req, res) => {
+// Test endpoint for Google Calendar API connection
+app.get('/test-google-calendar', async (req, res) => {
   try {
-    console.log('🧪 DEBUG TEST WEBHOOK TRIGGERED (GET)');
+    console.log('🧪 Testing Google Calendar API connection...');
     
-    // Use query parameters or defaults
-    const testData = {
-      name: req.query.name || "Jaden Test Browser",
-      email: req.query.email || "jadenlugoco@gmail.com",
-      phone: req.query.phone || "+12099387088", 
-      preferredDay: req.query.day || "Tuesday",
-      call_id: `browser_test_${Date.now()}`,
-      schedulingComplete: true,
-      schedulingLink: process.env.CALENDLY_SCHEDULING_LINK || "https://calendly.com/nexella/30min",
-      
-      // Complete discovery data
-      discovery_data: {
-        "How did you hear about us": req.query.source || "Instagram",
-        "Business/Industry": req.query.industry || "Solar",
-        "Main product": req.query.product || "Solar panels",
-        "Running ads": req.query.ads || "No", 
-        "Using CRM": req.query.crm || "Yes. Go high level",
-        "Pain points": req.query.pain || "Not following up leads quickly enough"
-      }
-    };
-    
-    console.log('🧪 Browser test - sending to n8n:', JSON.stringify(testData, null, 2));
-    
-    const success = await notifyN8nWebhook(testData);
-    
-    res.status(200).send(`
-      <html>
-        <head><title>Debug Test Results</title></head>
-        <body style="font-family: Arial; padding: 20px;">
-          <h2>🧪 Debug Test Webhook Results</h2>
-          <p><strong>Status:</strong> ${success ? '✅ SUCCESS' : '❌ FAILED'}</p>
-          <p><strong>Webhook URL:</strong> ${DEFAULT_N8N_WEBHOOK_URL}</p>
-          <h3>Test Data Sent:</h3>
-          <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px;">${JSON.stringify(testData, null, 2)}</pre>
-          
-          <h3>Quick Test Links:</h3>
-          <ul>
-            <li><a href="/debug-test-webhook?name=John&email=john@test.com&industry=Real Estate&product=Houses">Real Estate Test</a></li>
-            <li><a href="/debug-test-webhook?name=Sarah&email=sarah@test.com&industry=E-commerce&product=Clothing">E-commerce Test</a></li>
-            <li><a href="/debug-test-webhook?name=Mike&email=mike@test.com&industry=SaaS&product=Software">SaaS Test</a></li>
-          </ul>
-          
-          <p><a href="/debug-test-webhook">🔄 Run Another Test</a></p>
-        </body>
-      </html>
-    `);
-    
-  } catch (error) {
-    console.error('❌ Error in browser debug test:', error);
-    res.status(500).send(`
-      <html>
-        <body style="font-family: Arial; padding: 20px;">
-          <h2>❌ Debug Test Failed</h2>
-          <p><strong>Error:</strong> ${error.message}</p>
-          <p><a href="/debug-test-webhook">🔄 Try Again</a></p>
-        </body>
-      </html>
-    `);
-  }
-});
-
-// Test endpoint specifically for the N8N discovery flow
-app.get('/test-n8n-flow', async (req, res) => {
-  try {
-    console.log('🧪 TESTING N8N DISCOVERY FLOW');
-    
-    // Use query parameters or defaults for easy browser testing
-    const testData = {
-      name: req.query.name || "Discovery Test User",
-      email: req.query.email || "discoverytest@example.com",
-      phone: req.query.phone || "+1555123456",
-      preferredDay: req.query.day || "Friday", 
-      call_id: `n8n_test_${Date.now()}`,
-      schedulingComplete: true,
-      
-      // Complete discovery data with all 6 answers
-      discovery_data: {
-        "How did you hear about us": req.query.source || "LinkedIn",
-        "Business/Industry": req.query.industry || "Digital Marketing",
-        "Main product": req.query.product || "Marketing Software", 
-        "Running ads": req.query.ads || "Yes, Meta and Google",
-        "Using CRM": req.query.crm || "Yes, HubSpot",
-        "Pain points": req.query.pain || "Lead attribution is unclear"
-      }
-    };
-    
-    console.log('📤 Sending test data directly to N8N webhook:', JSON.stringify(testData, null, 2));
-    
-    // Send directly to N8N webhook (not through our server)
-    const n8nResponse = await axios.post('https://n8n-clp2.onrender.com/webhook/retell-scheduling', testData, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000 // 30 second timeout for N8N processing
-    });
-    
-    console.log('✅ N8N Response:', n8nResponse.data);
-    
-    // Create a nice HTML response showing what happened
-    res.status(200).send(`
-      <html>
-        <head>
-          <title>N8N Discovery Flow Test</title>
-          <style>
-            body { font-family: Arial; padding: 20px; max-width: 800px; }
-            .success { color: green; }
-            .data-box { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0; }
-            .discovery-item { margin: 5px 0; padding: 5px; background: #e8f4fd; border-radius: 3px; }
-            .test-links { margin: 20px 0; }
-            .test-links a { display: inline-block; margin: 5px; padding: 8px 15px; background: #007cba; color: white; text-decoration: none; border-radius: 4px; }
-          </style>
-        </head>
-        <body>
-          <h2>🧪 N8N Discovery Flow Test Results</h2>
-          <p class="success"><strong>✅ SUCCESS!</strong> Data sent to N8N workflow</p>
-          
-          <h3>📧 Contact Info Sent:</h3>
-          <div class="data-box">
-            <strong>Name:</strong> ${testData.name}<br>
-            <strong>Email:</strong> ${testData.email}<br>
-            <strong>Phone:</strong> ${testData.phone}<br>
-            <strong>Preferred Day:</strong> ${testData.preferredDay}
-          </div>
-          
-          <h3>🔍 Discovery Answers Sent:</h3>
-          <div class="data-box">
-            ${Object.entries(testData.discovery_data).map(([question, answer]) => 
-              `<div class="discovery-item"><strong>${question}:</strong> ${answer}</div>`
-            ).join('')}
-          </div>
-          
-          <h3>🎯 What Should Happen Next:</h3>
-          <ol>
-            <li>N8N should process this data through the "Code" node</li>
-            <li>Create/update record in "Email Log" Airtable</li>
-            <li>Check if email already sent</li>
-            <li>Generate Calendly link</li>
-            <li>Send email with booking link</li>
-            <li>Update Email Log with discovery data</li>
-          </ol>
-          
-          <div class="test-links">
-            <h3>🔄 Try Different Test Scenarios:</h3>
-            <a href="/test-n8n-flow?name=Solar Sam&email=sam@solar.com&industry=Solar&product=Panels&ads=No&crm=GoHighLevel&pain=Follow up issues">Solar Industry</a>
-            <a href="/test-n8n-flow?name=Tech Tim&email=tim@tech.com&industry=SaaS&product=Software&ads=Yes&crm=Salesforce&pain=Lead quality">SaaS Company</a>
-            <a href="/test-n8n-flow?name=Real Estate Rita&email=rita@realty.com&industry=Real Estate&product=Houses&ads=Yes&crm=No&pain=Market competition">Real Estate</a>
-            <a href="/test-n8n-flow?name=Agency Alice&email=alice@agency.com&industry=Marketing&product=Services&ads=Yes&crm=HubSpot&pain=Client retention">Marketing Agency</a>
-          </div>
-          
-          <h3>📊 Check Results In:</h3>
-          <ul>
-            <li><strong>Airtable Email Log:</strong> Should have new record with discovery data</li>
-            <li><strong>Email:</strong> ${testData.email} should receive booking link</li>
-            <li><strong>N8N Logs:</strong> Check your N8N workflow execution logs</li>
-          </ul>
-          
-          <p><strong>N8N Response:</strong></p>
-          <div class="data-box">
-            <pre>${JSON.stringify(n8nResponse.data, null, 2)}</pre>
-          </div>
-          
-          <p><a href="/test-n8n-flow">🔄 Run Another Test</a></p>
-        </body>
-      </html>
-    `);
-    
-  } catch (error) {
-    console.error('❌ Error testing N8N flow:', error);
-    
-    res.status(500).send(`
-      <html>
-        <body style="font-family: Arial; padding: 20px;">
-          <h2>❌ N8N Flow Test Failed</h2>
-          <p><strong>Error:</strong> ${error.message}</p>
-          
-          ${error.response ? `
-            <h3>N8N Response Details:</h3>
-            <pre style="background: #ffe6e6; padding: 10px; border-radius: 5px;">
-Status: ${error.response.status}
-Data: ${JSON.stringify(error.response.data, null, 2)}
-            </pre>
-          ` : ''}
-          
-          <p><strong>Possible Issues:</strong></p>
-          <ul>
-            <li>N8N webhook might be down</li>
-            <li>Airtable credentials might be expired</li>
-            <li>Email SMTP settings might be incorrect</li>
-            <li>Workflow might be paused</li>
-          </ul>
-          
-          <p><a href="/test-n8n-flow">🔄 Try Again</a></p>
-        </body>
-      </html>
-    `);
-  }
-});
-
-// POST version for API testing
-app.post('/test-n8n-flow', async (req, res) => {
-  try {
-    const testData = {
-      name: req.body.name || "API Test User",
-      email: req.body.email || "apitest@example.com", 
-      phone: req.body.phone || "+1555999888",
-      preferredDay: req.body.preferredDay || "Thursday",
-      call_id: req.body.call_id || `api_test_${Date.now()}`,
-      schedulingComplete: true,
-      discovery_data: req.body.discovery_data || {
-        "How did you hear about us": "API Test",
-        "Business/Industry": "Testing",
-        "Main product": "Test Products",
-        "Running ads": "Maybe",
-        "Using CRM": "Test CRM",
-        "Pain points": "Testing pain points"
-      }
-    };
-    
-    console.log('📤 API Test - sending to N8N:', JSON.stringify(testData, null, 2));
-    
-    const n8nResponse = await axios.post('https://n8n-clp2.onrender.com/webhook/retell-scheduling', testData, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000
-    });
+    // Test getting available slots for today
+    const today = new Date();
+    const availableSlots = await calendarService.getAvailableSlots(today);
     
     res.status(200).json({
       success: true,
-      message: 'Successfully sent test data to N8N workflow',
-      test_data: testData,
-      n8n_response: n8nResponse.data,
-      instructions: {
-        check_airtable: "Look for new record in Email Log table",
-        check_email: `Email should be sent to ${testData.email}`,
-        check_n8n: "Review N8N workflow execution logs"
-      }
+      message: 'Google Calendar API connection successful',
+      available_slots_today: availableSlots.length,
+      sample_slots: availableSlots.slice(0, 3), // Show first 3 slots
+      calendar_id: process.env.GOOGLE_CALENDAR_ID,
+      test_date: today.toISOString()
     });
-    
   } catch (error) {
-    console.error('❌ API test error:', error);
+    console.error('❌ Error testing Google Calendar API:', error);
     res.status(500).json({
       success: false,
       error: error.message,
-      n8n_response: error.response?.data || null
-    });
-  }
-});
-
-// Endpoint to test just the discovery data mapping
-app.post('/debug-discovery-mapping', async (req, res) => {
-  try {
-    console.log('🔍 TESTING DISCOVERY DATA MAPPING');
-    
-    const rawDiscoveryData = req.body.discovery_data || {
-      "question_0": "Instagram",
-      "question_1": "Solar", 
-      "question_2": "Solar panels",
-      "question_3": "No",
-      "question_4": "Yes. Go high level", 
-      "question_5": "Not following up leads quickly"
-    };
-    
-    // Test the mapping logic from your server
-    const fieldMappings = {
-      'question_0': 'How did you hear about us',
-      'question_1': 'Business/Industry',
-      'question_2': 'Main product', 
-      'question_3': 'Running ads',
-      'question_4': 'Using CRM',
-      'question_5': 'Pain points'
-    };
-    
-    const formattedDiscoveryData = {};
-    
-    Object.entries(rawDiscoveryData).forEach(([key, value]) => {
-      if (key.startsWith('question_')) {
-        if (fieldMappings[key]) {
-          formattedDiscoveryData[fieldMappings[key]] = value;
-        } else {
-          formattedDiscoveryData[key] = value;
-        }
-      } else {
-        formattedDiscoveryData[key] = value;
-      }
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Discovery data mapping test completed',
-      raw_input: rawDiscoveryData,
-      formatted_output: formattedDiscoveryData,
-      field_mappings: fieldMappings
-    });
-    
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Test endpoint for Retell API using the SDK
-app.get('/test-retell-api', async (req, res) => {
-  try {
-    // First try with SDK
-    if (retellClient) {
-      try {
-        const agents = await retellClient.agent.list();
-        
-        return res.status(200).json({
-          success: true,
-          message: 'Successfully connected to Retell API using SDK',
-          agents_count: agents.agents?.length || 0,
-          method: 'sdk'
-        });
-      } catch (sdkError) {
-        console.error('❌ SDK Error connecting to Retell API:', sdkError);
-        // Fall through to axios fallback
-      }
-    }
-    
-    // Fallback to axios
-    if (!process.env.RETELL_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "Missing RETELL_API_KEY environment variable"
-      });
-    }
-    
-    const response = await axios.get('https://api.retellai.com/v1/agents', {
-      headers: {
-        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Successfully connected to Retell API using axios',
-      agents_count: response.data.agents?.length || 0,
-      method: 'axios'
-    });
-  } catch (error) {
-    console.error('❌ Error connecting to Retell API:', error.response?.data || error.message);
-    
-    res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message
+      message: 'Google Calendar API connection failed'
     });
   }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Trigger server running on port ${PORT}`);
+  console.log(`🚀 Trigger server running on port ${PORT} with Google Calendar integration`);
 });
